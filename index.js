@@ -21,6 +21,19 @@ const accountsBaseUrl = process.env.ZOHO_ACCOUNTS_BASE_URL;
 const booksBaseUrl = process.env.ZOHO_BOOKS_BASE_URL;
 const tokenFilePath = path.join(__dirname, "zoho-tokens.json");
 
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") {
+    res.sendStatus(204);
+    return;
+  }
+
+  next();
+});
+
 function saveTokens(payload) {
   fs.writeFileSync(tokenFilePath, JSON.stringify(payload, null, 2), "utf8");
 }

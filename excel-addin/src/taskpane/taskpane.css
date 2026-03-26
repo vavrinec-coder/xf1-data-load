@@ -1,0 +1,116 @@
+.xf1-body {
+  margin: 0;
+  background: linear-gradient(180deg, #f7f3eb 0%, #ffffff 100%);
+  color: #1f1f1f;
+  font-family: "Aptos", "Segoe UI", sans-serif;
+}
+
+.xf1-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 100vh;
+  padding: 20px 18px 28px;
+  box-sizing: border-box;
+}
+
+.xf1-header {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.xf1-header h1 {
+  margin: 0;
+  font-size: 26px;
+}
+
+.xf1-header p,
+.xf1-help,
+.xf1-status {
+  margin: 4px 0 0;
+  color: #5a554f;
+}
+
+.xf1-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #ddd4c8;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 10px 30px rgba(112, 91, 58, 0.08);
+}
+
+.xf1-section h2,
+.xf1-format-group h3 {
+  margin: 0;
+}
+
+.xf1-format-group {
+  display: grid;
+  gap: 8px;
+}
+
+.xf1-format-group label {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.xf1-format-group input,
+.xf1-format-group select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #c9c0b4;
+  border-radius: 8px;
+  box-sizing: border-box;
+}
+
+.xf1-button-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.xf1-button {
+  border: 1px solid #1b4d3e;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #1b4d3e;
+  padding: 10px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.xf1-button:hover {
+  background: #f2f7f5;
+}
+
+.xf1-button-primary {
+  background: #1b4d3e;
+  color: #ffffff;
+}
+
+.xf1-button-primary:hover {
+  background: #153d31;
+}
+
+.xf1-button-secondary {
+  border-color: #8d4f20;
+  color: #8d4f20;
+}
+
+.xf1-button-secondary:hover {
+  background: #fff6ef;
+}
+
+.xf1-card {
+  padding: 12px;
+  border-radius: 10px;
+  background: #f6f2eb;
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-word;
+}

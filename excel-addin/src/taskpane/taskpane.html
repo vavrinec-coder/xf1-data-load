@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>XF1 Excel Add-in</title>
+    <script type="text/javascript" src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+    <link
+      rel="stylesheet"
+      href="https://res-1.cdn.office.net/files/fabric-cdn-prod_20230815.002/office-ui-fabric-core/11.1.0/css/fabric.min.css"
+    />
+    <link href="taskpane.css" rel="stylesheet" type="text/css" />
+  </head>
+  <body class="xf1-body">
+    <section id="sideload-msg" class="xf1-panel">
+      <h2>Sideload the add-in to continue.</h2>
+    </section>
+    <main id="app-body" class="xf1-panel" style="display: none;">
+      <div class="xf1-header">
+        <img width="44" height="44" src="../../assets/logo-filled.png" alt="XF1" />
+        <div>
+          <h1>XF1 Data Load</h1>
+          <p>Zoho-backed cached accounting values for Excel.</p>
+        </div>
+      </div>
+
+      <section class="xf1-section">
+        <h2>Actions</h2>
+        <div class="xf1-button-grid">
+          <button id="connect-zoho" class="xf1-button xf1-button-primary">Connect Zoho</button>
+          <button id="sync-data" class="xf1-button">Sync Accounting Data</button>
+          <button id="replace-values" class="xf1-button">Replace with Values</button>
+        </div>
+        <p id="status-text" class="xf1-status">Ready.</p>
+        <div id="cache-status" class="xf1-card"></div>
+      </section>
+
+      <section class="xf1-section">
+        <h2>Formatting</h2>
+        <p class="xf1-help">Applies to the current selection.</p>
+
+        <div class="xf1-format-group">
+          <h3>Formula Cells</h3>
+          <label>Font
+            <select id="formula-font">
+              <option>Calibri</option>
+              <option>Aptos</option>
+              <option>Arial</option>
+              <option>Times New Roman</option>
+              <option>Verdana</option>
+              <option>Tahoma</option>
+              <option>Georgia</option>
+              <option>Courier New</option>
+            </select>
+          </label>
+          <label>Font Color (Hex)
+            <input id="formula-color" type="text" value="#0000FF" />
+          </label>
+          <label>Font Size
+            <input id="formula-size" type="number" min="8" max="72" value="11" />
+          </label>
+        </div>
+
+        <div class="xf1-format-group">
+          <h3>Hardcoded Cells</h3>
+          <label>Font
+            <select id="value-font">
+              <option>Calibri</option>
+              <option>Aptos</option>
+              <option>Arial</option>
+              <option>Times New Roman</option>
+              <option>Verdana</option>
+              <option>Tahoma</option>
+              <option>Georgia</option>
+              <option>Courier New</option>
+            </select>
+          </label>
+          <label>Font Color (Hex)
+            <input id="value-color" type="text" value="#000000" />
+          </label>
+          <label>Font Size
+            <input id="value-size" type="number" min="8" max="72" value="11" />
+          </label>
+        </div>
+
+        <button id="apply-formatting" class="xf1-button xf1-button-secondary">Apply Formatting To Selection</button>
+      </section>
+
+      <section class="xf1-section">
+        <h2>Usage</h2>
+        <div class="xf1-card">
+          <code>=ACC_VAL("Sales","2026-01")</code><br />
+          <code>=ACC_VAL(A1,B1)</code>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
