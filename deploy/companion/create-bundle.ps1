@@ -9,6 +9,7 @@ $bundleRoot = if ($OutputRoot) { $OutputRoot } else { Join-Path $PSScriptRoot "o
 $appRoot = Join-Path $bundleRoot "app"
 $envSource = Join-Path $repoRoot ".env"
 $nodeSource = Join-Path $env:ProgramFiles "nodejs\node.exe"
+$zipPath = Join-Path (Split-Path -Parent $bundleRoot) "XF1-Desktop-Companion.zip"
 
 if (-not (Test-Path $envSource)) {
   throw "Missing .env at $envSource"
@@ -130,4 +131,111 @@ Set-Content -LiteralPath (Join-Path $bundleRoot "stop-xf1-companion.cmd") -Value
 Set-Content -LiteralPath (Join-Path $bundleRoot "start-xf1-companion-hidden.vbs") -Value $startVbs -Encoding ASCII
 Set-Content -LiteralPath (Join-Path $bundleRoot "README.txt") -Value $readme -Encoding ASCII
 
+$installCmd = @'
+@echo off
+powershell -ExecutionPolicy Bypass -File "%~dp0install-xf1-companion.ps1"
+'@
+
+$uninstallCmd = @'
+@echo off
+powershell -ExecutionPolicy Bypass -File "%~dp0uninstall-xf1-companion.ps1"
+'@
+
+$installPs1 = @'
+$ErrorActionPreference = "Stop"
+
+$sourceRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$installRoot = Join-Path $env:LOCALAPPDATA "Programs\XF1 Desktop Companion"
+$programsFolder = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\XF1 Desktop Companion"
+$desktopFolder = [Environment]::GetFolderPath("Desktop")
+
+if (Test-Path (Join-Path $installRoot "stop-xf1-companion.cmd")) {
+  & (Join-Path $installRoot "stop-xf1-companion.cmd") | Out-Null
+  Start-Sleep -Seconds 2
+}
+
+New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
+
+robocopy $sourceRoot $installRoot /E /R:2 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+$robocopyExit = $LASTEXITCODE
+if ($robocopyExit -ge 8) {
+  throw "robocopy failed with exit code $robocopyExit"
+}
+
+New-Item -ItemType Directory -Path $programsFolder -Force | Out-Null
+
+$wsh = New-Object -ComObject WScript.Shell
+
+function New-Shortcut($shortcutPath, $targetPath, $workingDir, $description) {
+  $shortcut = $wsh.CreateShortcut($shortcutPath)
+  $shortcut.TargetPath = $targetPath
+  $shortcut.WorkingDirectory = $workingDir
+  $shortcut.Description = $description
+  $shortcut.Save()
+}
+
+New-Shortcut (Join-Path $programsFolder "Start XF1 Desktop Companion.lnk") (Join-Path $installRoot "start-xf1-companion.cmd") $installRoot "Start XF1 Desktop Companion"
+New-Shortcut (Join-Path $programsFolder "Stop XF1 Desktop Companion.lnk") (Join-Path $installRoot "stop-xf1-companion.cmd") $installRoot "Stop XF1 Desktop Companion"
+New-Shortcut (Join-Path $desktopFolder "Start XF1 Desktop Companion.lnk") (Join-Path $installRoot "start-xf1-companion.cmd") $installRoot "Start XF1 Desktop Companion"
+
+& (Join-Path $installRoot "start-xf1-companion.cmd")
+
+for ($attempt = 0; $attempt -lt 15; $attempt += 1) {
+  Start-Sleep -Seconds 1
+  try {
+    $health = Invoke-RestMethod -Uri "http://localhost:3000/health"
+    if ($health.ok) {
+      Write-Host "XF1 Desktop Companion health check passed."
+      break
+    }
+  } catch {
+    if ($attempt -eq 14) {
+      throw "Installed files copied, but the companion did not respond on http://localhost:3000/health"
+    }
+  }
+}
+
+Write-Host "Installed XF1 Desktop Companion to $installRoot"
+'@
+
+$uninstallPs1 = @'
+$ErrorActionPreference = "Stop"
+
+$installRoot = Join-Path $env:LOCALAPPDATA "Programs\XF1 Desktop Companion"
+$programsFolder = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\XF1 Desktop Companion"
+$desktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "Start XF1 Desktop Companion.lnk"
+
+if (Test-Path (Join-Path $installRoot "stop-xf1-companion.cmd")) {
+  & (Join-Path $installRoot "stop-xf1-companion.cmd") | Out-Null
+  Start-Sleep -Seconds 2
+}
+
+if (Test-Path $desktopShortcut) {
+  Remove-Item -LiteralPath $desktopShortcut -Force
+}
+
+if (Test-Path $programsFolder) {
+  Remove-Item -LiteralPath $programsFolder -Recurse -Force
+}
+
+if (Test-Path $installRoot) {
+  cmd /c rd /s /q "$installRoot"
+}
+
+Write-Host "Uninstalled XF1 Desktop Companion from $installRoot"
+Write-Host "User data under %LOCALAPPDATA%\\XF1 Data Load was kept."
+'@
+
+Set-Content -LiteralPath (Join-Path $bundleRoot "install-xf1-companion.cmd") -Value $installCmd -Encoding ASCII
+Set-Content -LiteralPath (Join-Path $bundleRoot "uninstall-xf1-companion.cmd") -Value $uninstallCmd -Encoding ASCII
+Set-Content -LiteralPath (Join-Path $bundleRoot "install-xf1-companion.ps1") -Value $installPs1 -Encoding ASCII
+Set-Content -LiteralPath (Join-Path $bundleRoot "uninstall-xf1-companion.ps1") -Value $uninstallPs1 -Encoding ASCII
+
+if (Test-Path $zipPath) {
+  Remove-Item -LiteralPath $zipPath -Force
+}
+
+Compress-Archive -Path (Join-Path $bundleRoot "*") -DestinationPath $zipPath -CompressionLevel Optimal
+
 Write-Host "Created companion bundle at $bundleRoot"
+Write-Host "Created companion zip at $zipPath"
