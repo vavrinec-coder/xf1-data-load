@@ -3,7 +3,15 @@
 /* eslint-disable office-addins/load-object-before-read */
 
 const LOCAL_API_BASE_URL = "http://localhost:3000";
-const ACC_FORMULA_PREFIX = "=ACC_VAL(";
+
+function isAccValFormula(formula) {
+  if (typeof formula !== "string") {
+    return false;
+  }
+
+  const normalized = formula.trim().toUpperCase();
+  return normalized.startsWith("=XF1.ACC_VAL(") || normalized.startsWith("=ACC_VAL(");
+}
 
 function setStatus(message, isError = false) {
   const status = document.getElementById("status-text");
@@ -97,10 +105,7 @@ async function replaceAccValWithValues() {
         for (let row = 0; row < usedRange.rowCount; row += 1) {
           for (let col = 0; col < usedRange.columnCount; col += 1) {
             const formula = formulas[row][col];
-            if (
-              typeof formula === "string" &&
-              formula.toUpperCase().startsWith(ACC_FORMULA_PREFIX)
-            ) {
+            if (isAccValFormula(formula)) {
               const cell = usedRange.getCell(row, col);
               cell.values = [[values[row][col]]];
             }
@@ -122,10 +127,12 @@ async function applyFormattingToSelection() {
     const formulaFont = document.getElementById("formula-font").value;
     const formulaColor = normalizeHexColor(document.getElementById("formula-color").value);
     const formulaSize = Number(document.getElementById("formula-size").value);
+    const formulaFormat = document.getElementById("formula-format").value.trim();
 
     const valueFont = document.getElementById("value-font").value;
     const valueColor = normalizeHexColor(document.getElementById("value-color").value);
     const valueSize = Number(document.getElementById("value-size").value);
+    const valueFormat = document.getElementById("value-format").value.trim();
 
     await Excel.run(async (context) => {
       const range = context.workbook.getSelectedRange();
@@ -148,10 +155,16 @@ async function applyFormattingToSelection() {
             cell.format.font.name = formulaFont;
             cell.format.font.color = formulaColor;
             cell.format.font.size = formulaSize;
+            if (formulaFormat) {
+              cell.numberFormat = [[formulaFormat]];
+            }
           } else {
             cell.format.font.name = valueFont;
             cell.format.font.color = valueColor;
             cell.format.font.size = valueSize;
+            if (valueFormat) {
+              cell.numberFormat = [[valueFormat]];
+            }
           }
         }
       }

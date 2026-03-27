@@ -60,12 +60,19 @@
 }
 
 .xf1-format-group input,
-.xf1-format-group select {
+.xf1-format-group select,
+.xf1-format-group textarea {
   width: 100%;
   padding: 8px 10px;
   border: 1px solid #c9c0b4;
   border-radius: 8px;
   box-sizing: border-box;
+  font: inherit;
+}
+
+.xf1-format-group textarea {
+  resize: vertical;
+  min-height: 56px;
 }
 
 .xf1-button-grid {

@@ -44,21 +44,24 @@
           <h3>Formula Cells</h3>
           <label>Font
             <select id="formula-font">
-              <option>Calibri</option>
               <option>Aptos</option>
               <option>Arial</option>
-              <option>Times New Roman</option>
-              <option>Verdana</option>
+              <option>Calibri</option>
+              <option selected>Verdana</option>
               <option>Tahoma</option>
               <option>Georgia</option>
+              <option>Times New Roman</option>
               <option>Courier New</option>
             </select>
           </label>
           <label>Font Color (Hex)
-            <input id="formula-color" type="text" value="#0000FF" />
+            <input id="formula-color" type="text" value="#000000" />
           </label>
           <label>Font Size
-            <input id="formula-size" type="number" min="8" max="72" value="11" />
+            <input id="formula-size" type="number" min="8" max="72" value="10" />
+          </label>
+          <label>Custom Format
+            <textarea id="formula-format" rows="2">#,##0_ ;[Red]-#,###;"-"</textarea>
           </label>
         </div>
 
@@ -66,21 +69,24 @@
           <h3>Hardcoded Cells</h3>
           <label>Font
             <select id="value-font">
-              <option>Calibri</option>
               <option>Aptos</option>
               <option>Arial</option>
-              <option>Times New Roman</option>
-              <option>Verdana</option>
+              <option>Calibri</option>
+              <option selected>Verdana</option>
               <option>Tahoma</option>
               <option>Georgia</option>
+              <option>Times New Roman</option>
               <option>Courier New</option>
             </select>
           </label>
           <label>Font Color (Hex)
-            <input id="value-color" type="text" value="#000000" />
+            <input id="value-color" type="text" value="#3333FF" />
           </label>
           <label>Font Size
-            <input id="value-size" type="number" min="8" max="72" value="11" />
+            <input id="value-size" type="number" min="8" max="72" value="10" />
+          </label>
+          <label>Custom Format
+            <textarea id="value-format" rows="2">#,##0_ ;[Red]-#,###;"-"</textarea>
           </label>
         </div>
 
