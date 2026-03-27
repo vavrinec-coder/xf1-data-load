@@ -11,7 +11,7 @@
   <SupportUrl DefaultValue="https://vavrinec-coder.github.io/xf1-data-load/support.html"/>
   <AppDomains>
     <AppDomain>https://vavrinec-coder.github.io/xf1-data-load</AppDomain>
-    <AppDomain>http://localhost:3000</AppDomain>
+    <AppDomain>https://xf1-data-load-production.up.railway.app</AppDomain>
   </AppDomains>
   <Hosts>
     <Host Name="Workbook"/>

@@ -1,8 +1,11 @@
 # GitHub Pages Hosting
 
-This add-in now supports a hosted frontend on GitHub Pages while keeping the XF1 desktop companion local on each user machine.
+This add-in uses:
 
-## What gets hosted
+- GitHub Pages for the hosted Excel add-in frontend
+- Railway for the pilot cloud backend
+
+## What gets hosted on GitHub Pages
 
 The Excel add-in web assets in `excel-addin/dist`:
 
@@ -13,30 +16,33 @@ The Excel add-in web assets in `excel-addin/dist`:
 - icons and support page
 - a production `manifest.xml`
 
-## What stays local
+## What is hosted on Railway
 
-- `index.js`
-- `db.js`
-- `zoho-cache.sqlite`
-- `zoho-tokens.json`
-- Zoho OAuth callback on `http://localhost:3000`
+The pilot cloud backend:
+
+- Zoho OAuth flow
+- per-user Zoho connection records
+- cloud sync and normalization
+- cached `ACC_VAL` lookups
 
 ## Deployment flow
 
 1. Push changes to `main`.
-2. Enable GitHub Pages for this repo and set the source to **GitHub Actions**.
-3. The workflow `.github/workflows/deploy-addin-pages.yml` will publish the add-in frontend to:
+2. GitHub Actions publishes the add-in frontend to:
    - `https://vavrinec-coder.github.io/xf1-data-load`
-4. Download the production manifest from the built artifact or the published bundle and distribute that manifest to users.
+3. Railway deploys the backend from:
+   - `cloud-backend`
+4. Microsoft 365 admin center uses:
+   - `deploy/m365/xf1-excel-addin-production-manifest.xml`
 
 ## Local development
 
 Keep using:
 
-- `node index.js` from the repo root
-- `npm start` from `excel-addin`
+- `node index.js` from the repo root for the legacy local prototype
+- `npm start` from `excel-addin` for add-in development
 
-That continues to use `https://localhost:3001` for the add-in UI and `http://localhost:3000` for the local companion.
+The active pilot path, however, is now cloud-backed.
 
 ## Production manifest
 
@@ -44,13 +50,6 @@ The production build rewrites every `https://localhost:3001` manifest URL to:
 
 - `https://vavrinec-coder.github.io/xf1-data-load`
 
-It also uses:
+It also allows the pilot backend domain:
 
-- public asset path `/xf1-data-load/`
-
-If you later move to a custom domain or Azure Static Web Apps, set:
-
-- `ADDIN_BASE_URL`
-- `ADDIN_PUBLIC_PATH`
-
-before running `npm run build:pages`.
+- `https://xf1-data-load-production.up.railway.app`

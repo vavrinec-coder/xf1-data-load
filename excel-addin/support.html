@@ -38,13 +38,14 @@
     <main>
       <h1>XF1 Data Load Support</h1>
       <p>
-        This Excel add-in relies on the XF1 local desktop companion for Zoho authentication,
+        This Excel add-in now uses the XF1 cloud backend for Zoho authentication,
         accounting sync, and cached value lookups.
       </p>
       <ul>
         <li>Open the add-in pane from Excel.</li>
+        <li>Save your <code>Cloud Identity</code> with your work email.</li>
         <li>Click <code>Connect Zoho</code> to authorize your own Zoho Books account.</li>
-        <li>Click <code>Sync Accounting Data</code> to refresh the local cache.</li>
+        <li>Click <code>Sync Accounting Data</code> to refresh the cloud cache for your connected company.</li>
         <li>Use <code>=XF1.ACC_VAL(account, period)</code> in Excel.</li>
       </ul>
     </main>
