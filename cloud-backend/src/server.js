@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const express = require("express");
 const axios = require("axios");
+const cors = require("cors");
 const dotenv = require("dotenv");
 const {
   migrate,
@@ -29,6 +30,11 @@ if (!publicBaseUrl || !clientId || !clientSecret || !redirectUri || !accountsBas
 }
 
 app.use(express.json());
+app.use(
+  cors({
+    origin: true,
+  })
+);
 
 app.get("/", (_req, res) => {
   res.json({

@@ -3,6 +3,8 @@
 /* eslint-disable office-addins/load-object-before-read */
 
 const LOCAL_API_BASE_URL = "http://localhost:3000";
+const CLOUD_API_BASE_URL = "https://xf1-data-load-production.up.railway.app";
+const CLOUD_IDENTITY_STORAGE_KEY = "xf1-cloud-identity";
 
 function isAccValFormula(formula) {
   if (typeof formula !== "string") {
@@ -44,7 +46,81 @@ function normalizeHexColor(value) {
   throw new Error(`Invalid hex color: ${value}`);
 }
 
-async function refreshStatus() {
+function normalizeEmail(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase();
+}
+
+function getCloudIdentityFromInputs() {
+  return {
+    name: String(document.getElementById("cloud-name").value || "").trim(),
+    email: normalizeEmail(document.getElementById("cloud-email").value),
+  };
+}
+
+function getCloudIdentity() {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(CLOUD_IDENTITY_STORAGE_KEY) || "{}");
+    return {
+      name: String(parsed.name || "").trim(),
+      email: normalizeEmail(parsed.email),
+    };
+  } catch {
+    return { name: "", email: "" };
+  }
+}
+
+function setCloudIdentityInputs(identity) {
+  document.getElementById("cloud-name").value = identity.name || "";
+  document.getElementById("cloud-email").value = identity.email || "";
+}
+
+function saveCloudIdentity() {
+  const identity = getCloudIdentityFromInputs();
+  if (!identity.email) {
+    throw new Error("Enter your email before saving cloud identity.");
+  }
+
+  window.localStorage.setItem(CLOUD_IDENTITY_STORAGE_KEY, JSON.stringify(identity));
+  return identity;
+}
+
+async function refreshCloudStatus() {
+  const identity = getCloudIdentity();
+  const container = document.getElementById("cloud-status");
+
+  if (!identity.email) {
+    container.innerHTML =
+      "<div><strong>Cloud Zoho:</strong> Save your email to enable cloud connection.</div>";
+    return;
+  }
+
+  try {
+    const encodedUserId = encodeURIComponent(identity.email);
+    const result = await fetchJson(`${CLOUD_API_BASE_URL}/users/${encodedUserId}/connections`);
+    const latest = result.connections[0];
+
+    if (!latest) {
+      container.innerHTML = `
+        <div><strong>User:</strong> ${identity.email}</div>
+        <div><strong>Cloud Zoho:</strong> Not connected yet</div>
+      `;
+      return;
+    }
+
+    container.innerHTML = `
+      <div><strong>User:</strong> ${identity.email}</div>
+      <div><strong>Organization:</strong> ${latest.zoho_organization_name || "Unknown"}</div>
+      <div><strong>Status:</strong> ${latest.status || "unknown"}</div>
+      <div><strong>Updated:</strong> ${latest.updated_at || "Unknown"}</div>
+    `;
+  } catch (error) {
+    container.textContent = error.message;
+  }
+}
+
+async function refreshLocalCacheStatus() {
   try {
     const status = await fetchJson(`${LOCAL_API_BASE_URL}/cache/status`);
     const container = document.getElementById("cache-status");
@@ -59,9 +135,23 @@ async function refreshStatus() {
   }
 }
 
+async function refreshStatus() {
+  await Promise.all([refreshCloudStatus(), refreshLocalCacheStatus()]);
+}
+
 function openZohoConnect() {
-  window.open(`${LOCAL_API_BASE_URL}/connect/zoho`, "_blank");
-  setStatus("Zoho connect flow opened in browser.");
+  try {
+    const identity = saveCloudIdentity();
+    const url =
+      `${CLOUD_API_BASE_URL}/auth/zoho/start?user_id=${encodeURIComponent(identity.email)}` +
+      `&email=${encodeURIComponent(identity.email)}` +
+      `&name=${encodeURIComponent(identity.name || identity.email)}`;
+
+    window.open(url, "_blank");
+    setStatus("Cloud Zoho connect flow opened in browser.");
+  } catch (error) {
+    setStatus(error.message, true);
+  }
 }
 
 async function syncAccountingData() {
@@ -178,10 +268,23 @@ async function applyFormattingToSelection() {
   }
 }
 
+function handleSaveIdentity() {
+  try {
+    saveCloudIdentity();
+    setStatus("Cloud identity saved.");
+    refreshCloudStatus();
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
 Office.onReady(() => {
   document.getElementById("sideload-msg").style.display = "none";
   document.getElementById("app-body").style.display = "flex";
 
+  setCloudIdentityInputs(getCloudIdentity());
+
+  document.getElementById("save-identity").onclick = handleSaveIdentity;
   document.getElementById("connect-zoho").onclick = openZohoConnect;
   document.getElementById("sync-data").onclick = syncAccountingData;
   document.getElementById("replace-values").onclick = replaceAccValWithValues;

@@ -32,6 +32,10 @@
   color: #5a554f;
 }
 
+.xf1-help {
+  line-height: 1.4;
+}
+
 .xf1-section {
   display: flex;
   flex-direction: column;
@@ -120,4 +124,8 @@
   font-size: 13px;
   line-height: 1.5;
   word-break: break-word;
+}
+
+.xf1-card strong {
+  color: #1f1f1f;
 }
