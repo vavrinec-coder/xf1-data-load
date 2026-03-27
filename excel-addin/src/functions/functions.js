@@ -1,6 +1,8 @@
-/* global fetch */
+/* global OfficeRuntime, fetch, localStorage */
 
-const LOCAL_API_BASE_URL = "http://localhost:3000";
+const CLOUD_API_BASE_URL = "https://xf1-data-load-production.up.railway.app";
+const CLOUD_IDENTITY_STORAGE_KEY = "xf1-cloud-identity";
+const CLOUD_USER_ID_STORAGE_KEY = "xf1-cloud-user-id";
 
 async function fetchJson(url) {
   const response = await fetch(url);
@@ -24,6 +26,31 @@ async function fetchJson(url) {
   return response.json();
 }
 
+async function getCloudUserId() {
+  if (typeof OfficeRuntime !== "undefined" && OfficeRuntime.storage?.getItem) {
+    const storedUserId = await OfficeRuntime.storage.getItem(CLOUD_USER_ID_STORAGE_KEY);
+    if (storedUserId) {
+      return String(storedUserId).trim().toLowerCase();
+    }
+  }
+
+  if (typeof localStorage !== "undefined") {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(CLOUD_IDENTITY_STORAGE_KEY) || "{}");
+      const email = String(parsed.email || "")
+        .trim()
+        .toLowerCase();
+      if (email) {
+        return email;
+      }
+    } catch {
+      // Ignore local storage parse failures and continue to the error below.
+    }
+  }
+
+  throw new Error("Save your Cloud Identity in the XF1 panel before using ACC_VAL.");
+}
+
 /**
  * Returns a cached accounting value for the given account and month.
  * P&L accounts return monthly movement. Balance sheet accounts return month-end balance.
@@ -45,8 +72,9 @@ export async function accVal(accountName, period) {
     throw new Error("Period must be in YYYY-MM format.");
   }
 
+  const userId = await getCloudUserId();
   const url =
-    `${LOCAL_API_BASE_URL}/value?account_name=${encodeURIComponent(account)}` +
+    `${CLOUD_API_BASE_URL}/users/${encodeURIComponent(userId)}/value?account_name=${encodeURIComponent(account)}` +
     `&period=${encodeURIComponent(month)}`;
 
   const data = await fetchJson(url);

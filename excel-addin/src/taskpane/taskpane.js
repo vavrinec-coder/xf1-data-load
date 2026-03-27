@@ -1,10 +1,10 @@
-/* global document, Excel, Office, fetch, window */
+/* global document, Excel, Office, OfficeRuntime, fetch, window */
 /* eslint-disable office-addins/no-context-sync-in-loop */
 /* eslint-disable office-addins/load-object-before-read */
 
-const LOCAL_API_BASE_URL = "http://localhost:3000";
 const CLOUD_API_BASE_URL = "https://xf1-data-load-production.up.railway.app";
 const CLOUD_IDENTITY_STORAGE_KEY = "xf1-cloud-identity";
+const CLOUD_USER_ID_STORAGE_KEY = "xf1-cloud-user-id";
 
 function isAccValFormula(formula) {
   if (typeof formula !== "string") {
@@ -19,6 +19,14 @@ function setStatus(message, isError = false) {
   const status = document.getElementById("status-text");
   status.textContent = message;
   status.style.color = isError ? "#a61b1b" : "#5a554f";
+}
+
+async function persistCloudIdentity(identity) {
+  window.localStorage.setItem(CLOUD_IDENTITY_STORAGE_KEY, JSON.stringify(identity));
+
+  if (typeof OfficeRuntime !== "undefined" && OfficeRuntime.storage?.setItem) {
+    await OfficeRuntime.storage.setItem(CLOUD_USER_ID_STORAGE_KEY, identity.email);
+  }
 }
 
 async function fetchJson(url) {
@@ -76,13 +84,13 @@ function setCloudIdentityInputs(identity) {
   document.getElementById("cloud-email").value = identity.email || "";
 }
 
-function saveCloudIdentity() {
+async function saveCloudIdentity() {
   const identity = getCloudIdentityFromInputs();
   if (!identity.email) {
     throw new Error("Enter your email before saving cloud identity.");
   }
 
-  window.localStorage.setItem(CLOUD_IDENTITY_STORAGE_KEY, JSON.stringify(identity));
+  await persistCloudIdentity(identity);
   return identity;
 }
 
@@ -120,28 +128,38 @@ async function refreshCloudStatus() {
   }
 }
 
-async function refreshLocalCacheStatus() {
+async function refreshSyncStatus() {
+  const identity = getCloudIdentity();
+  const container = document.getElementById("cache-status");
+
+  if (!identity.email) {
+    container.innerHTML =
+      "<div><strong>Sync:</strong> Save your email to load cloud sync status.</div>";
+    return;
+  }
+
   try {
-    const status = await fetchJson(`${LOCAL_API_BASE_URL}/cache/status`);
-    const container = document.getElementById("cache-status");
+    const encodedUserId = encodeURIComponent(identity.email);
+    const status = await fetchJson(`${CLOUD_API_BASE_URL}/users/${encodedUserId}/cache-status`);
     container.innerHTML = `
+      <div><strong>Connected Org:</strong> ${status.organization_name || "Not connected yet"}</div>
       <div><strong>Last Sync:</strong> ${status.last_refresh_at || "Not synced yet"}</div>
       <div><strong>Accounts:</strong> ${status.account_dim_count || 0}</div>
       <div><strong>Journal Lines:</strong> ${status.journal_line_count || 0}</div>
       <div><strong>Account Periods:</strong> ${status.account_period_count || 0}</div>
     `;
   } catch (error) {
-    document.getElementById("cache-status").textContent = error.message;
+    container.textContent = error.message;
   }
 }
 
 async function refreshStatus() {
-  await Promise.all([refreshCloudStatus(), refreshLocalCacheStatus()]);
+  await Promise.all([refreshCloudStatus(), refreshSyncStatus()]);
 }
 
-function openZohoConnect() {
+async function openZohoConnect() {
   try {
-    const identity = saveCloudIdentity();
+    const identity = await saveCloudIdentity();
     const url =
       `${CLOUD_API_BASE_URL}/auth/zoho/start?user_id=${encodeURIComponent(identity.email)}` +
       `&email=${encodeURIComponent(identity.email)}` +
@@ -156,8 +174,10 @@ function openZohoConnect() {
 
 async function syncAccountingData() {
   try {
+    const identity = await saveCloudIdentity();
     setStatus("Syncing accounting data...");
-    const result = await fetchJson(`${LOCAL_API_BASE_URL}/zoho/refresh`);
+    const encodedUserId = encodeURIComponent(identity.email);
+    const result = await fetchJson(`${CLOUD_API_BASE_URL}/users/${encodedUserId}/sync`);
 
     await Excel.run(async (context) => {
       context.workbook.application.calculate(Excel.CalculationType.full);
@@ -269,13 +289,14 @@ async function applyFormattingToSelection() {
 }
 
 function handleSaveIdentity() {
-  try {
-    saveCloudIdentity();
-    setStatus("Cloud identity saved.");
-    refreshCloudStatus();
-  } catch (error) {
-    setStatus(error.message, true);
-  }
+  saveCloudIdentity()
+    .then(() => {
+      setStatus("Cloud identity saved.");
+      return refreshStatus();
+    })
+    .catch((error) => {
+      setStatus(error.message, true);
+    });
 }
 
 Office.onReady(() => {
