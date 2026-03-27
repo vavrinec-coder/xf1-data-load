@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "build:companion-bundle": "powershell -ExecutionPolicy Bypass -File ./deploy/companion/create-bundle.ps1",
     "start": "node index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },

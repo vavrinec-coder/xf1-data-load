@@ -1,7 +1,6 @@
 const Database = require("better-sqlite3");
-const path = require("path");
+const { dbPath } = require("./app-paths");
 
-const dbPath = path.join(__dirname, "zoho-cache.sqlite");
 const db = new Database(dbPath);
 
 db.pragma("journal_mode = WAL");

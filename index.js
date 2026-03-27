@@ -1,7 +1,6 @@
 const express = require("express");
 const axios = require("axios");
 const fs = require("fs");
-const path = require("path");
 const {
   dbPath,
   refreshCache,
@@ -9,6 +8,7 @@ const {
   getCachedEntries,
   getCacheStatus,
 } = require("./db");
+const { appHome, tokenFilePath, pidFilePath } = require("./app-paths");
 require("dotenv").config();
 
 const app = express();
@@ -19,7 +19,28 @@ const clientSecret = process.env.ZOHO_CLIENT_SECRET;
 const redirectUri = process.env.ZOHO_REDIRECT_URI;
 const accountsBaseUrl = process.env.ZOHO_ACCOUNTS_BASE_URL;
 const booksBaseUrl = process.env.ZOHO_BOOKS_BASE_URL;
-const tokenFilePath = path.join(__dirname, "zoho-tokens.json");
+
+function writePidFile() {
+  fs.writeFileSync(pidFilePath, String(process.pid), "utf8");
+}
+
+function cleanupPidFile() {
+  if (fs.existsSync(pidFilePath)) {
+    fs.rmSync(pidFilePath, { force: true });
+  }
+}
+
+process.on("SIGINT", () => {
+  cleanupPidFile();
+  process.exit(0);
+});
+
+process.on("SIGTERM", () => {
+  cleanupPidFile();
+  process.exit(0);
+});
+
+process.on("exit", cleanupPidFile);
 
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -292,9 +313,22 @@ app.get("/", (_req, res) => {
       <li><a href="/zoho/chart-of-accounts">/zoho/chart-of-accounts</a></li>
       <li><a href="/zoho/refresh">/zoho/refresh</a></li>
       <li><a href="/cache/status">/cache/status</a></li>
+      <li><a href="/health">/health</a></li>
     </ul>
+    <p>App Home: ${appHome}</p>
     <p>Cache DB: ${dbPath}</p>
   `);
+});
+
+app.get("/health", (_req, res) => {
+  res.json({
+    ok: true,
+    port,
+    app_home: appHome,
+    db_path: dbPath,
+    token_file_path: tokenFilePath,
+    pid_file_path: pidFilePath,
+  });
 });
 
 app.get("/connect/zoho", (_req, res) => {
@@ -588,5 +622,6 @@ app.get("/value", (req, res) => {
 });
 
 app.listen(port, () => {
+  writePidFile();
   console.log(`Zoho local prototype listening on http://localhost:${port}`);
 });

@@ -10,3 +10,4 @@ yarn-debug.log*
 yarn-error.log*
 dist/
 build/
+deploy/companion/out/
