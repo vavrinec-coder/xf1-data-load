@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>XF1 Data Load Support</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: Verdana, sans-serif;
+        background: #f5efe2;
+        color: #1d2f2d;
+      }
+
+      main {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 48px 24px;
+      }
+
+      h1 {
+        margin-bottom: 12px;
+      }
+
+      p,
+      li {
+        line-height: 1.6;
+      }
+
+      code {
+        background: #efe7d3;
+        padding: 2px 6px;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>XF1 Data Load Support</h1>
+      <p>
+        This Excel add-in relies on the XF1 local desktop companion for Zoho authentication,
+        accounting sync, and cached value lookups.
+      </p>
+      <ul>
+        <li>Open the add-in pane from Excel.</li>
+        <li>Click <code>Connect Zoho</code> to authorize your own Zoho Books account.</li>
+        <li>Click <code>Sync Accounting Data</code> to refresh the local cache.</li>
+        <li>Use <code>=XF1.ACC_VAL(account, period)</code> in Excel.</li>
+      </ul>
+    </main>
+  </body>
+</html>

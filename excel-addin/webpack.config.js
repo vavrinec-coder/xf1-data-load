@@ -5,8 +5,22 @@ const CopyWebpackPlugin = require("copy-webpack-plugin");
 const CustomFunctionsMetadataPlugin = require("custom-functions-metadata-plugin");
 const HtmlWebpackPlugin = require("html-webpack-plugin");
 
-const urlDev = "https://localhost:3001/";
-const urlProd = "https://www.contoso.com/"; // CHANGE THIS TO YOUR PRODUCTION DEPLOYMENT LOCATION
+const urlDev = "https://localhost:3001";
+const defaultProdBaseUrl = "https://vavrinec-coder.github.io/xf1-data-load";
+
+function trimTrailingSlash(url) {
+  return String(url || "").replace(/\/+$/, "");
+}
+
+function ensureLeadingAndTrailingSlash(path) {
+  const trimmed = String(path || "").trim();
+  if (!trimmed) {
+    return "/";
+  }
+
+  const withoutLeading = trimmed.replace(/^\/+/, "");
+  return `/${withoutLeading.replace(/\/+$/, "")}/`;
+}
 
 /* global require, module, process */
 
@@ -17,6 +31,8 @@ async function getHttpsOptions() {
 
 module.exports = async (env, options) => {
   const dev = options.mode === "development";
+  const baseUrl = trimTrailingSlash(process.env.ADDIN_BASE_URL || defaultProdBaseUrl);
+  const publicPath = dev ? "/" : ensureLeadingAndTrailingSlash(process.env.ADDIN_PUBLIC_PATH || "/xf1-data-load/");
   const config = {
     devtool: "source-map",
     entry: {
@@ -27,6 +43,7 @@ module.exports = async (env, options) => {
     },
     output: {
       clean: true,
+      publicPath,
     },
     resolve: {
       extensions: [".html", ".js"],
@@ -71,13 +88,17 @@ module.exports = async (env, options) => {
             to: "assets/[name][ext][query]",
           },
           {
+            from: "support.html",
+            to: "[name][ext]",
+          },
+          {
             from: "manifest*.xml",
             to: "[name]" + "[ext]",
             transform(content) {
               if (dev) {
                 return content;
               } else {
-                return content.toString().replace(urlDev, urlProd);
+                return content.toString().replaceAll(urlDev, baseUrl);
               }
             },
           },
