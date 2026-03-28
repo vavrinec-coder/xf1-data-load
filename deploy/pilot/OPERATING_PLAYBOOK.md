@@ -41,6 +41,27 @@ For a test-data change:
 - Railway backend:
   - `https://xf1-data-load-production.up.railway.app`
 
+## Quick reference
+
+Useful backend endpoints:
+- Health:
+  - `/health`
+- List user connections:
+  - `/users/<user_id>/connections`
+- Start Zoho auth:
+  - `/auth/zoho/start?user_id=<user_id>`
+- Trigger sync:
+  - `/users/<user_id>/sync`
+- Read cached value:
+  - `/users/<user_id>/value?account_name=<account_name>&period=<yyyy-mm>`
+
+Best operational check:
+1. Confirm `/health`.
+2. Confirm the user has a Zoho connection.
+3. Trigger sync.
+4. Verify the cloud value endpoint.
+5. Verify the live Excel cell.
+
 ## Key files
 
 - Manifest:
