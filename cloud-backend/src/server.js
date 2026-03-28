@@ -61,6 +61,14 @@ function normalizeAccounts(accounts) {
   }));
 }
 
+function chunk(array, size) {
+  const result = [];
+  for (let i = 0; i < array.length; i += size) {
+    result.push(array.slice(i, i + size));
+  }
+  return result;
+}
+
 function buildPeriodRange(periods) {
   if (!periods.length) {
     return [];
@@ -215,6 +223,65 @@ async function fetchJournalDetails(accessToken, organizationId, journalId, targe
   });
 
   return response.data.journal;
+}
+
+async function fetchAccountTransactions(accessToken, organizationId, accountId, targetBooksBaseUrl) {
+  const allTransactions = [];
+  let page = 1;
+  const perPage = 200;
+
+  while (true) {
+    const response = await axios.get(`${targetBooksBaseUrl}/chartofaccounts/transactions`, {
+      params: {
+        organization_id: organizationId,
+        account_id: accountId,
+        page,
+        per_page: perPage,
+      },
+      headers: {
+        Authorization: `Zoho-oauthtoken ${accessToken}`,
+      },
+    });
+
+    const transactions = response.data.transactions || [];
+    allTransactions.push(...transactions);
+
+    if (transactions.length < perPage) {
+      break;
+    }
+
+    page += 1;
+  }
+
+  return allTransactions;
+}
+
+function normalizeAccountTransactions(accountRows, transactionRows) {
+  const accountMap = new Map(accountRows.map((account) => [account.account_id, account]));
+
+  return transactionRows.map((transaction, index) => {
+    const account = accountMap.get(transaction.account_id) || {};
+    const debitAmount = Number(transaction.debit_amount || 0);
+    const creditAmount = Number(transaction.credit_amount || 0);
+    const signedAmount = debitAmount - creditAmount;
+    const transactionDate = transaction.transaction_date || "";
+
+    return {
+      line_id:
+        transaction.categorized_transaction_id ||
+        `${transaction.account_id || "unknown-account"}::${transaction.transaction_id || "unknown-tx"}::${index}`,
+      journal_id: transaction.transaction_id || transaction.categorized_transaction_id || `tx-${index}`,
+      journal_date: transactionDate,
+      period: transactionDate.slice(0, 7),
+      reference_number: transaction.reference_number || transaction.entry_number || "",
+      account_id: transaction.account_id || account.account_id || "",
+      account_name: transaction.account_name || account.account_name || "",
+      debit_or_credit: signedAmount >= 0 ? "debit" : "credit",
+      amount: Number(Math.abs(signedAmount).toFixed(2)),
+      signed_amount: Number(signedAmount.toFixed(2)),
+      description: transaction.description || transaction.transaction_type || "",
+    };
+  });
 }
 
 async function getAuthenticatedConnection(userId) {
@@ -395,21 +462,32 @@ app.get("/users/:userId/sync", async (req, res) => {
 
     const accounts = await fetchChartOfAccounts(accessToken, organizationId, connection.zoho_books_base_url);
     const normalizedAccounts = normalizeAccounts(accounts);
-    const journalSummaries = await fetchAllJournals(accessToken, organizationId, connection.zoho_books_base_url);
-    const detailedJournals = [];
+    const transactionRows = [];
+    const accountBatches = chunk(
+      normalizedAccounts.filter((account) => account.account_id),
+      5
+    );
 
-    for (const journal of journalSummaries) {
-      detailedJournals.push(
-        await fetchJournalDetails(
-          accessToken,
-          organizationId,
-          journal.journal_id,
-          connection.zoho_books_base_url
+    for (const accountBatch of accountBatches) {
+      const batchResults = await Promise.all(
+        accountBatch.map((account) =>
+          fetchAccountTransactions(
+            accessToken,
+            organizationId,
+            account.account_id,
+            connection.zoho_books_base_url
+          )
         )
       );
+
+      for (const accountTransactions of batchResults) {
+        transactionRows.push(...accountTransactions);
+      }
     }
 
-    const lineRows = normalizeJournalLines(detailedJournals);
+    const lineRows = normalizeAccountTransactions(normalizedAccounts, transactionRows).filter(
+      (row) => row.account_name && row.period
+    );
     const distinctPeriods = [...new Set(lineRows.map((row) => row.period))].sort();
     const periodRange = buildPeriodRange(distinctPeriods);
     const refreshedAt = new Date().toISOString();
@@ -419,7 +497,7 @@ app.get("/users/:userId/sync", async (req, res) => {
       organization_id: organizationId,
       organization_name: connection.zoho_organization_name,
       account_count: normalizedAccounts.length,
-      journal_count: detailedJournals.length,
+      journal_count: transactionRows.length,
       line_count: lineRows.length,
       periods: periodRange,
     };
