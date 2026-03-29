@@ -32,6 +32,12 @@ const redirectUri = process.env.ZOHO_REDIRECT_URI;
 const accountsBaseUrl = process.env.ZOHO_ACCOUNTS_BASE_URL;
 const booksBaseUrl = process.env.ZOHO_BOOKS_BASE_URL;
 const sessionSecret = process.env.SESSION_SECRET;
+const pilotDepartmentTag = {
+  tag_id: "3538165000000000632",
+  tag_name: "Department",
+  sales_option_id: "3538165000000064044",
+  operations_option_id: "3538165000000064042",
+};
 
 if (!publicBaseUrl || !clientId || !clientSecret || !redirectUri || !accountsBaseUrl || !booksBaseUrl) {
   throw new Error("Missing required cloud backend environment variables.");
@@ -536,25 +542,28 @@ app.post("/internal/pilot/seed-adapter-test-data", async (req, res) => {
     const tagResponse = await books.get("/reportingtags", {
       params: { organization_id: organizationId },
     });
-    const departmentTag = (tagResponse.data.reporting_tags || []).find(
+    const reportingTags = tagResponse.data.reporting_tags || tagResponse.data.reportingtags || [];
+    const departmentTag = reportingTags.find(
       (tag) => String(tag.tag_name || "").trim().toLowerCase() === "department"
-    );
-    if (!departmentTag) {
-      res.status(400).json({ error: "Department reporting tag not found." });
-      return;
-    }
+    ) || {
+      tag_id: pilotDepartmentTag.tag_id,
+      tag_name: pilotDepartmentTag.tag_name,
+    };
 
     const optionsResponse = await books.get("/reportingtags/options", {
       params: { organization_id: organizationId, tag_id: departmentTag.tag_id },
     });
     const departmentOptions = optionsResponse.data.tag_options || [];
-    const salesDepartment = departmentOptions.find((option) => option.tag_option_name === "Sales");
-    const operationsDepartment = departmentOptions.find((option) => option.tag_option_name === "Operations");
-
-    if (!salesDepartment || !operationsDepartment) {
-      res.status(400).json({ error: "Required Department tag options not found." });
-      return;
-    }
+    const salesDepartment =
+      departmentOptions.find((option) => option.tag_option_name === "Sales") || {
+        tag_option_id: pilotDepartmentTag.sales_option_id,
+        tag_option_name: "Sales",
+      };
+    const operationsDepartment =
+      departmentOptions.find((option) => option.tag_option_name === "Operations") || {
+        tag_option_id: pilotDepartmentTag.operations_option_id,
+        tag_option_name: "Operations",
+      };
 
     const customerResponse = await books.post(`/contacts?organization_id=${organizationId}`, {
       contact_name: `XF1 Pilot Customer ${timestamp}`,
