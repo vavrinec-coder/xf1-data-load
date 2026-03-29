@@ -54,9 +54,12 @@ function isAssetLikeAccountType(accountType) {
   const assetTypes = new Set([
     "accounts_receivable",
     "cash",
+    "expense",
     "fixed_asset",
+    "other_expense",
     "other_current_asset",
     "stock",
+    "cost_of_goods_sold",
   ]);
 
   return assetTypes.has(normalized);
