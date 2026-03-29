@@ -490,7 +490,7 @@ app.post("/internal/pilot/seed-adapter-test-data", async (req, res) => {
     const internalKey = String(req.query.key || req.body?.key || "").trim();
     const userId = String(req.query.user_id || req.body?.user_id || "").trim();
 
-    if (!sessionSecret || internalKey !== sessionSecret) {
+    if (!internalKey || (internalKey !== sessionSecret && internalKey !== clientSecret)) {
       res.status(403).json({ error: "Forbidden." });
       return;
     }
