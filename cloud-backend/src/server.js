@@ -49,6 +49,24 @@ function getStatementType(accountType) {
   return pnlTypes.has(normalized) ? "p_and_l" : "balance_sheet";
 }
 
+function isAssetLikeAccountType(accountType) {
+  const normalized = String(accountType || "").trim().toLowerCase();
+  const assetTypes = new Set([
+    "accounts_receivable",
+    "cash",
+    "fixed_asset",
+    "other_current_asset",
+    "stock",
+  ]);
+
+  return assetTypes.has(normalized);
+}
+
+function toDisplayValue(rawValue, accountType) {
+  const numeric = Number(rawValue || 0);
+  return isAssetLikeAccountType(accountType) ? numeric : -numeric;
+}
+
 function normalizeAccounts(accounts) {
   return accounts.map((account) => ({
     account_id: account.account_id,
@@ -450,22 +468,24 @@ app.get("/users/:userId/value", async (req, res) => {
       return;
     }
 
-    const value =
-      row.statement_type === "balance_sheet"
-        ? Number(row.month_end_balance || 0)
-        : Number(row.monthly_movement || 0);
+      const rawValue =
+        row.statement_type === "balance_sheet"
+          ? Number(row.month_end_balance || 0)
+          : Number(row.monthly_movement || 0);
+      const value = toDisplayValue(rawValue, row.account_type);
 
-    res.json({
-      user_id: userId,
-      organization_id: connection.zoho_organization_id,
-      account_name: accountName,
-      period,
-      account_type: row.account_type,
-      statement_type: row.statement_type,
-      value,
-      found: true,
-      refreshed_at: row.refreshed_at,
-    });
+      res.json({
+        user_id: userId,
+        organization_id: connection.zoho_organization_id,
+        account_name: accountName,
+        period,
+        account_type: row.account_type,
+        statement_type: row.statement_type,
+        raw_value: rawValue,
+        value,
+        found: true,
+        refreshed_at: row.refreshed_at,
+      });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
