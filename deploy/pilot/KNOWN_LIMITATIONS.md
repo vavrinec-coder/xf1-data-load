@@ -11,15 +11,18 @@ These are the important pilot limitations to keep in mind.
 ## Formula behavior
 
 - Function name is `XF1.ACC_VAL(...)`
+- Department-aware function is `XF1.ACC_DEPT_VAL(...)`
 - The formula expects exact Zoho account names
 - The period must be `YYYY-MM`
-- Results use raw accounting sign
+- Department names must match the Zoho reporting tag option exactly
+- Results use business display sign, not raw ledger sign
 
 ## Data behavior
 
 - P&L accounts return monthly movement for the selected month
 - Balance sheet accounts return month-end closing balance for the selected month
 - Values depend on the last successful `Sync Accounting Data`
+- Department-level values are currently built from tagged journal lines first; non-journal modules are not yet department-aware
 
 ## Pilot scope
 

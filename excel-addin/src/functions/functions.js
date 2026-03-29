@@ -48,7 +48,7 @@ async function getCloudUserId() {
     }
   }
 
-  throw new Error("Save your Cloud Identity in the XF1 panel before using ACC_VAL.");
+  throw new Error("Save your Cloud Identity in the XF1 panel before using XF1 functions.");
 }
 
 /**
@@ -76,6 +76,40 @@ export async function accVal(accountName, period) {
   const url =
     `${CLOUD_API_BASE_URL}/users/${encodeURIComponent(userId)}/value?account_name=${encodeURIComponent(account)}` +
     `&period=${encodeURIComponent(month)}`;
+
+  const data = await fetchJson(url);
+  return Number(data.value || 0);
+}
+
+/**
+ * Returns a cached accounting value for the given account, month, and department.
+ * P&L accounts return monthly movement. Balance sheet accounts return month-end balance.
+ * @customfunction ACC_DEPT_VAL
+ * @param {string} accountName Exact Zoho account name
+ * @param {string} period Accounting period in YYYY-MM format
+ * @param {string} department Exact department reporting tag option name
+ * @returns {Promise<number>} Cached department-scoped accounting value
+ */
+export async function accDeptVal(accountName, period, department) {
+  const account = String(accountName || "").trim();
+  const month = String(period || "").trim();
+  const dept = String(department || "").trim();
+
+  if (!account || !month || !dept) {
+    throw new Error("ACC_DEPT_VAL requires account name, YYYY-MM period, and department.");
+  }
+
+  const periodPattern = /^\d{4}-\d{2}$/;
+  if (!periodPattern.test(month)) {
+    throw new Error("Period must be in YYYY-MM format.");
+  }
+
+  const userId = await getCloudUserId();
+  const url =
+    `${CLOUD_API_BASE_URL}/users/${encodeURIComponent(userId)}/value-by-department` +
+    `?account_name=${encodeURIComponent(account)}` +
+    `&period=${encodeURIComponent(month)}` +
+    `&department=${encodeURIComponent(dept)}`;
 
   const data = await fetchJson(url);
   return Number(data.value || 0);

@@ -29,6 +29,7 @@ Then confirm:
 - the `Cloud Zoho` box shows your connected company
 - the `Sync Accounting Data` action completes successfully
 - the example `XF1.ACC_VAL(...)` cells return numbers
+- if you use reporting tags, `XF1.ACC_DEPT_VAL(...)` returns numbers for tagged journal lines
 
 ## If something looks wrong
 
@@ -41,4 +42,5 @@ Then confirm:
 
 - The account names in formulas must match the Zoho Chart of Accounts exactly
 - The period must be in `YYYY-MM` format
-- `XF1.ACC_VAL(...)` returns raw accounting sign
+- Department names in `XF1.ACC_DEPT_VAL(...)` must match Zoho reporting tag options exactly
+- Display signs are business-friendly, not raw ledger signs

@@ -8,6 +8,7 @@ This note captures the working operational model for the current XF1 Zoho-to-Exc
 - Add-in frontend is hosted on GitHub Pages.
 - Zoho connect, sync, and value lookup run through the Railway cloud backend.
 - `XF1.ACC_VAL(account_name, period)` is cloud-backed.
+- `XF1.ACC_DEPT_VAL(account_name, period, department)` is cloud-backed for tagged journal lines.
 - The local desktop companion is legacy prototype code and is not the default pilot path.
 
 ## Safe operating sequence
@@ -54,6 +55,8 @@ Useful backend endpoints:
   - `/users/<user_id>/sync`
 - Read cached value:
   - `/users/<user_id>/value?account_name=<account_name>&period=<yyyy-mm>`
+- Read cached department value:
+  - `/users/<user_id>/value-by-department?account_name=<account_name>&period=<yyyy-mm>&department=<department_name>`
 
 Best operational check:
 1. Confirm `/health`.
@@ -75,4 +78,4 @@ Best operational check:
 
 - P&L accounts return monthly movement.
 - Balance sheet accounts return month-end balance.
-- Signs use raw accounting sign.
+- Signs use business display sign.

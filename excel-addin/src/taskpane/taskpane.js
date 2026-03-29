@@ -12,7 +12,12 @@ function isAccValFormula(formula) {
   }
 
   const normalized = formula.trim().toUpperCase();
-  return normalized.startsWith("=XF1.ACC_VAL(") || normalized.startsWith("=ACC_VAL(");
+  return (
+    normalized.startsWith("=XF1.ACC_VAL(") ||
+    normalized.startsWith("=ACC_VAL(") ||
+    normalized.startsWith("=XF1.ACC_DEPT_VAL(") ||
+    normalized.startsWith("=ACC_DEPT_VAL(")
+  );
 }
 
 function setStatus(message, isError = false) {
@@ -147,6 +152,7 @@ async function refreshSyncStatus() {
       <div><strong>Accounts:</strong> ${status.account_dim_count || 0}</div>
       <div><strong>Journal Lines:</strong> ${status.journal_line_count || 0}</div>
       <div><strong>Account Periods:</strong> ${status.account_period_count || 0}</div>
+      <div><strong>Dept Periods:</strong> ${status.account_period_department_count || 0}</div>
     `;
   } catch (error) {
     container.textContent = error.message;

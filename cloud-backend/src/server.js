@@ -15,6 +15,7 @@ const {
   replaceUserOrgCache,
   getCacheStatus,
   getAccountPeriodValue,
+  getDepartmentAccountPeriodValue,
   dbHealth,
   exportUserOrgRows,
 } = require("./db");
@@ -157,6 +158,113 @@ function normalizeJournalLines(journals) {
       };
     })
   );
+}
+
+function normalizePostingLineFacts(accountRows, journals) {
+  const accountMap = new Map(accountRows.map((account) => [account.account_id, account]));
+
+  return journals.flatMap((journal) =>
+    (journal.line_items || []).map((lineItem) => {
+      const account = accountMap.get(lineItem.account_id) || {};
+      const amount = Number(lineItem.amount || 0);
+      const signedAmountRaw = lineItem.debit_or_credit === "debit" ? amount : -amount;
+      const departmentTag = (lineItem.tags || []).find(
+        (tag) => String(tag.tag_name || "").trim().toLowerCase() === "department"
+      );
+
+      return {
+        source_module: "journal",
+        source_txn_id: journal.journal_id,
+        source_line_id: lineItem.line_id,
+        posting_date: journal.journal_date,
+        period: journal.journal_date.slice(0, 7),
+        account_id: lineItem.account_id || "",
+        account_name: lineItem.account_name || account.account_name || "",
+        account_type: account.account_type || "",
+        statement_type: account.statement_type || getStatementType(account.account_type),
+        debit_or_credit: lineItem.debit_or_credit,
+        amount,
+        signed_amount_raw: Number(signedAmountRaw.toFixed(2)),
+        reference_number: journal.reference_number || "",
+        description: lineItem.description || journal.notes || "",
+        department_tag_id: departmentTag?.tag_option_id || null,
+        department_name: departmentTag?.tag_option_name || null,
+      };
+    })
+  );
+}
+
+function buildAccountPeriodDepartmentRows(accountRows, postingLineRows, periods, refreshedAt) {
+  const movementMap = new Map();
+  const accountDepartmentMap = new Map();
+
+  for (const row of postingLineRows) {
+    if (!row.account_id || !row.period || !row.department_name) {
+      continue;
+    }
+
+    const key = `${row.account_id}::${row.period}::${row.department_name}`;
+    const existing = movementMap.get(key) || {
+      monthly_movement_raw: 0,
+      entry_count: 0,
+      department_tag_id: row.department_tag_id || null,
+      department_name: row.department_name,
+    };
+
+    existing.monthly_movement_raw += row.signed_amount_raw;
+    existing.entry_count += 1;
+    movementMap.set(key, existing);
+
+    const accountDepartmentKey = `${row.account_id}::${row.department_name}`;
+    if (!accountDepartmentMap.has(accountDepartmentKey)) {
+      accountDepartmentMap.set(accountDepartmentKey, {
+        account_id: row.account_id,
+        department_tag_id: row.department_tag_id || null,
+        department_name: row.department_name,
+      });
+    }
+  }
+
+  const accountMap = new Map(accountRows.map((account) => [account.account_id, account]));
+
+  return [...accountDepartmentMap.values()].flatMap((accountDepartment) => {
+    const account = accountMap.get(accountDepartment.account_id);
+    if (!account) {
+      return [];
+    }
+
+    let closingBalanceRaw = 0;
+
+    return periods.map((period) => {
+      const movement = movementMap.get(
+        `${accountDepartment.account_id}::${period}::${accountDepartment.department_name}`
+      ) || {
+        monthly_movement_raw: 0,
+        entry_count: 0,
+        department_tag_id: accountDepartment.department_tag_id,
+        department_name: accountDepartment.department_name,
+      };
+
+      if (account.statement_type === "balance_sheet") {
+        closingBalanceRaw += movement.monthly_movement_raw;
+      }
+
+      return {
+        account_id: account.account_id,
+        account_name: account.account_name,
+        account_type: account.account_type,
+        statement_type: account.statement_type,
+        period,
+        department_tag_id: movement.department_tag_id,
+        department_name: movement.department_name,
+        monthly_movement_raw: Number(movement.monthly_movement_raw.toFixed(2)),
+        month_end_balance_raw:
+          account.statement_type === "balance_sheet" ? Number(closingBalanceRaw.toFixed(2)) : null,
+        entry_count: movement.entry_count,
+        refreshed_at: refreshedAt,
+      };
+    });
+  });
 }
 
 function buildAccountPeriodRows(accountRows, lineRows, periods, refreshedAt) {
@@ -424,6 +532,8 @@ app.get("/users/:userId/cache-status", async (req, res) => {
         account_dim_count: 0,
         journal_line_count: 0,
         account_period_count: 0,
+        posting_line_fact_count: 0,
+        account_period_department_count: 0,
       });
       return;
     }
@@ -489,6 +599,68 @@ app.get("/users/:userId/value", async (req, res) => {
         found: true,
         refreshed_at: row.refreshed_at,
       });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get("/users/:userId/value-by-department", async (req, res) => {
+  try {
+    const userId = String(req.params.userId || "").trim();
+    const accountName = String(req.query.account_name || "").trim();
+    const period = String(req.query.period || "").trim();
+    const department = String(req.query.department || "").trim();
+
+    if (!userId || !accountName || !period || !department) {
+      res.status(400).json({ error: "Provide userId, account_name, period, and department." });
+      return;
+    }
+
+    const connection = await getPrimaryConnectionForUser(userId);
+    if (!connection) {
+      res.status(404).json({ error: "No Zoho connection found for this user." });
+      return;
+    }
+
+    const row = await getDepartmentAccountPeriodValue(
+      userId,
+      connection.zoho_organization_id,
+      accountName,
+      period,
+      department
+    );
+    if (!row) {
+      res.status(404).json({
+        user_id: userId,
+        organization_id: connection.zoho_organization_id,
+        account_name: accountName,
+        period,
+        department,
+        value: 0,
+        found: false,
+      });
+      return;
+    }
+
+    const rawValue =
+      row.statement_type === "balance_sheet"
+        ? Number(row.month_end_balance_raw || 0)
+        : Number(row.monthly_movement_raw || 0);
+    const value = toDisplayValue(rawValue, row.account_type);
+
+    res.json({
+      user_id: userId,
+      organization_id: connection.zoho_organization_id,
+      account_name: accountName,
+      period,
+      department,
+      account_type: row.account_type,
+      statement_type: row.statement_type,
+      raw_value: rawValue,
+      value,
+      found: true,
+      refreshed_at: row.refreshed_at,
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -564,15 +736,45 @@ app.get("/users/:userId/sync", async (req, res) => {
     );
     const distinctPeriods = [...new Set(lineRows.map((row) => row.period))].sort();
     const periodRange = buildPeriodRange(distinctPeriods);
+    const journals = await fetchAllJournals(accessToken, organizationId, connection.zoho_books_base_url);
+    const detailedJournals = [];
+    const journalBatches = chunk(journals, 10);
+
+    for (const journalBatch of journalBatches) {
+      const details = await Promise.all(
+        journalBatch.map((journal) =>
+          fetchJournalDetails(
+            accessToken,
+            organizationId,
+            journal.journal_id,
+            connection.zoho_books_base_url
+          )
+        )
+      );
+      detailedJournals.push(...details);
+    }
+
+    const postingLineRows = normalizePostingLineFacts(normalizedAccounts, detailedJournals).filter(
+      (row) => row.account_name && row.period && row.department_name
+    );
     const refreshedAt = new Date().toISOString();
     const accountPeriodRows = buildAccountPeriodRows(normalizedAccounts, lineRows, periodRange, refreshedAt);
+    const accountPeriodDepartmentRows = buildAccountPeriodDepartmentRows(
+      normalizedAccounts,
+      postingLineRows,
+      periodRange,
+      refreshedAt
+    ).filter((row) => row.department_name);
 
     const summary = {
       organization_id: organizationId,
       organization_name: connection.zoho_organization_name,
       account_count: normalizedAccounts.length,
-      journal_count: transactionRows.length,
+      journal_count: detailedJournals.length,
+      transaction_count: transactionRows.length,
       line_count: lineRows.length,
+      posting_line_fact_count: postingLineRows.length,
+      account_period_department_count: accountPeriodDepartmentRows.length,
       periods: periodRange,
     };
 
@@ -582,6 +784,8 @@ app.get("/users/:userId/sync", async (req, res) => {
       accountRows: normalizedAccounts,
       lineRows,
       periodRows: accountPeriodRows,
+      postingLineRows,
+      departmentPeriodRows: accountPeriodDepartmentRows,
       refreshedAt,
       summary,
     });
