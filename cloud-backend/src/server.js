@@ -31,6 +31,7 @@ const clientSecret = process.env.ZOHO_CLIENT_SECRET;
 const redirectUri = process.env.ZOHO_REDIRECT_URI;
 const accountsBaseUrl = process.env.ZOHO_ACCOUNTS_BASE_URL;
 const booksBaseUrl = process.env.ZOHO_BOOKS_BASE_URL;
+const sessionSecret = process.env.SESSION_SECRET;
 
 if (!publicBaseUrl || !clientId || !clientSecret || !redirectUri || !accountsBaseUrl || !booksBaseUrl) {
   throw new Error("Missing required cloud backend environment variables.");
@@ -446,11 +447,24 @@ async function getAuthenticatedConnection(userId) {
     throw new Error("Zoho connection has no usable token.");
   }
 
+  if (connection.access_token) {
+    try {
+      await getOrganizations(connection.access_token, connection.zoho_books_base_url);
+      return {
+        ...connection,
+        live_access_token: connection.access_token,
+      };
+    } catch (error) {
+      const status = error?.response?.status;
+      const code = error?.response?.data?.code;
+      if (status !== 401 && code !== 57) {
+        throw error;
+      }
+    }
+  }
+
   if (!connection.refresh_token) {
-    return {
-      ...connection,
-      live_access_token: connection.access_token,
-    };
+    throw new Error("Zoho connection has no refresh token and stored access token is no longer valid.");
   }
 
   const tokenResponse = await axios.post(`${connection.zoho_accounts_base_url}/oauth/v2/token`, null, {
@@ -470,6 +484,191 @@ async function getAuthenticatedConnection(userId) {
     live_access_token: accessToken,
   };
 }
+
+app.post("/internal/pilot/seed-adapter-test-data", async (req, res) => {
+  try {
+    const internalKey = String(req.query.key || req.body?.key || "").trim();
+    const userId = String(req.query.user_id || req.body?.user_id || "").trim();
+
+    if (!sessionSecret || internalKey !== sessionSecret) {
+      res.status(403).json({ error: "Forbidden." });
+      return;
+    }
+
+    if (!userId) {
+      res.status(400).json({ error: "Provide user_id." });
+      return;
+    }
+
+    const connection = await getAuthenticatedConnection(userId);
+    const accessToken = connection.live_access_token;
+    const organizationId = connection.zoho_organization_id;
+    const timestamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+    const headers = { Authorization: `Zoho-oauthtoken ${accessToken}` };
+
+    const books = axios.create({
+      baseURL: connection.zoho_books_base_url,
+      headers,
+    });
+
+    const accounts = normalizeAccounts(
+      await fetchChartOfAccounts(accessToken, organizationId, connection.zoho_books_base_url)
+    );
+
+    const salesAccount = accounts.find((account) => account.account_name === "Sales");
+    const consultantAccount =
+      accounts.find((account) => account.account_name === "Consultant Expense") ||
+      accounts.find((account) => account.account_name === "Other Expenses");
+    const cashAccount =
+      accounts.find((account) => account.account_name === "Main Bank account") ||
+      accounts.find((account) => account.account_type === "cash");
+
+    if (!salesAccount || !consultantAccount || !cashAccount) {
+      res.status(400).json({
+        error: "Required accounts not found.",
+        sales_account: salesAccount?.account_id || null,
+        consultant_account: consultantAccount?.account_id || null,
+        cash_account: cashAccount?.account_id || null,
+      });
+      return;
+    }
+
+    const tagResponse = await books.get("/reportingtags", {
+      params: { organization_id: organizationId },
+    });
+    const departmentTag = (tagResponse.data.reporting_tags || []).find(
+      (tag) => String(tag.tag_name || "").trim().toLowerCase() === "department"
+    );
+    if (!departmentTag) {
+      res.status(400).json({ error: "Department reporting tag not found." });
+      return;
+    }
+
+    const optionsResponse = await books.get("/reportingtags/options", {
+      params: { organization_id: organizationId, tag_id: departmentTag.tag_id },
+    });
+    const departmentOptions = optionsResponse.data.tag_options || [];
+    const salesDepartment = departmentOptions.find((option) => option.tag_option_name === "Sales");
+    const operationsDepartment = departmentOptions.find((option) => option.tag_option_name === "Operations");
+
+    if (!salesDepartment || !operationsDepartment) {
+      res.status(400).json({ error: "Required Department tag options not found." });
+      return;
+    }
+
+    const customerResponse = await books.post(`/contacts?organization_id=${organizationId}`, {
+      contact_name: `XF1 Pilot Customer ${timestamp}`,
+      company_name: `XF1 Pilot Customer ${timestamp}`,
+      contact_type: "customer",
+    });
+    const customer = customerResponse.data.contact;
+
+    const vendorResponse = await books.post(`/contacts?organization_id=${organizationId}`, {
+      contact_name: `XF1 Pilot Vendor ${timestamp}`,
+      company_name: `XF1 Pilot Vendor ${timestamp}`,
+      contact_type: "vendor",
+    });
+    const vendor = vendorResponse.data.contact;
+
+    const salesItemResponse = await books.post(`/items?organization_id=${organizationId}`, {
+      name: `XF1 Pilot Service ${timestamp}`,
+      rate: 12000,
+      item_type: "sales",
+      account_id: salesAccount.account_id,
+      description: "Pilot sales adapter test item",
+    });
+    const salesItem = salesItemResponse.data.item;
+
+    const invoiceResponse = await books.post(`/invoices?organization_id=${organizationId}`, {
+      customer_id: customer.contact_id,
+      date: "2026-03-29",
+      line_items: [
+        {
+          item_id: salesItem.item_id,
+          rate: 12000,
+          quantity: 1,
+          description: "Sales adapter tag test",
+          tags: [{ tag_id: departmentTag.tag_id, tag_option_id: salesDepartment.tag_option_id }],
+        },
+      ],
+      notes: "Pilot tagged sales invoice for adapter testing",
+    });
+    const invoice = invoiceResponse.data.invoice;
+
+    let purchaseResult = null;
+    let purchaseMode = null;
+
+    try {
+      const billResponse = await books.post(`/bills?organization_id=${organizationId}`, {
+        vendor_id: vendor.contact_id,
+        date: "2026-03-29",
+        line_items: [
+          {
+            name: `XF1 Pilot Consultant Service ${timestamp}`,
+            rate: 7000,
+            quantity: 1,
+            account_id: consultantAccount.account_id,
+            description: "Purchase adapter tag test",
+            tags: [{ tag_id: departmentTag.tag_id, tag_option_id: operationsDepartment.tag_option_id }],
+          },
+        ],
+        notes: "Pilot tagged bill for adapter testing",
+      });
+      purchaseResult = billResponse.data.bill;
+      purchaseMode = "bill";
+    } catch (billError) {
+      const expenseResponse = await books.post(`/expenses?organization_id=${organizationId}`, {
+        account_id: consultantAccount.account_id,
+        paid_through_account_id: cashAccount.account_id,
+        date: "2026-03-29",
+        amount: 7000,
+        vendor_id: vendor.contact_id,
+        description: "Pilot tagged expense for adapter testing",
+        line_items: [
+          {
+            account_id: consultantAccount.account_id,
+            amount: 7000,
+            description: "Expense adapter tag test",
+            tags: [{ tag_id: departmentTag.tag_id, tag_option_id: operationsDepartment.tag_option_id }],
+          },
+        ],
+      });
+      purchaseResult = expenseResponse.data.expense;
+      purchaseMode = "expense";
+    }
+
+    res.json({
+      ok: true,
+      user_id: userId,
+      organization_id: organizationId,
+      tag_name: departmentTag.tag_name,
+      sales_invoice: {
+        invoice_id: invoice.invoice_id,
+        invoice_number: invoice.invoice_number,
+        customer_name: customer.contact_name,
+      },
+      purchase_transaction: {
+        mode: purchaseMode,
+        id:
+          purchaseResult.bill_id ||
+          purchaseResult.expense_id ||
+          purchaseResult.purchaseorder_id ||
+          null,
+        number:
+          purchaseResult.bill_number ||
+          purchaseResult.expense_number ||
+          purchaseResult.expense_reference_id ||
+          null,
+        vendor_name: vendor.contact_name,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: error.message,
+      details: error.response?.data || null,
+    });
+  }
+});
 
 app.get("/", (_req, res) => {
   res.json({
