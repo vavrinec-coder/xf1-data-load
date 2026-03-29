@@ -16,6 +16,7 @@ const {
   getCacheStatus,
   getAccountPeriodValue,
   dbHealth,
+  exportUserOrgRows,
 } = require("./db");
 
 dotenv.config();
@@ -59,6 +60,28 @@ function normalizeAccounts(accounts) {
     account_status: account.account_status || "",
     currency: account.currency_code || account.currency || "",
   }));
+}
+
+function toCsv(rows) {
+  if (!rows.length) {
+    return "";
+  }
+
+  const headers = Object.keys(rows[0]);
+  const escapeCell = (value) => {
+    const text = value == null ? "" : String(value);
+    if (/[",\n]/.test(text)) {
+      return `"${text.replace(/"/g, '""')}"`;
+    }
+    return text;
+  };
+
+  const lines = [
+    headers.join(","),
+    ...rows.map((row) => headers.map((header) => escapeCell(row[header])).join(",")),
+  ];
+
+  return `${lines.join("\n")}\n`;
 }
 
 function chunk(array, size) {
@@ -443,6 +466,34 @@ app.get("/users/:userId/value", async (req, res) => {
       found: true,
       refreshed_at: row.refreshed_at,
     });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get("/users/:userId/export/:tableName.csv", async (req, res) => {
+  try {
+    const userId = String(req.params.userId || "").trim();
+    const tableName = String(req.params.tableName || "").trim();
+
+    if (!userId || !tableName) {
+      res.status(400).json({ error: "Provide userId and tableName." });
+      return;
+    }
+
+    const connection = await getPrimaryConnectionForUser(userId);
+    if (!connection) {
+      res.status(404).json({ error: "No Zoho connection found for this user." });
+      return;
+    }
+
+    const rows = await exportUserOrgRows(userId, connection.zoho_organization_id, tableName);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${tableName}-${userId.replace(/[^a-zA-Z0-9._-]/g, "_")}.csv"`
+    );
+    res.send(toCsv(rows));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

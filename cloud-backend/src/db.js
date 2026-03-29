@@ -478,6 +478,25 @@ async function dbHealth() {
   return result.rows[0];
 }
 
+async function exportUserOrgRows(userId, organizationId, tableName) {
+  const allowed = new Set(["account_dim", "journal_line_cache", "account_period_cache", "sync_state"]);
+  if (!allowed.has(tableName)) {
+    throw new Error(`Unsupported export table: ${tableName}`);
+  }
+
+  const result = await pool.query(
+    `
+      SELECT *
+      FROM ${tableName}
+      WHERE xf1_user_id = $1 AND zoho_organization_id = $2
+      ORDER BY 1, 2, 3
+    `,
+    [userId, organizationId]
+  );
+
+  return result.rows;
+}
+
 module.exports = {
   pool,
   migrate,
@@ -492,4 +511,5 @@ module.exports = {
   getCacheStatus,
   getAccountPeriodValue,
   dbHealth,
+  exportUserOrgRows,
 };
