@@ -8,7 +8,7 @@ This note captures the working operational model for the current XF1 Zoho-to-Exc
 - Add-in frontend is hosted on GitHub Pages.
 - Zoho connect, sync, and value lookup run through the Railway cloud backend.
 - `XF1.ACC_VAL(account_name, period)` is cloud-backed.
-- `XF1.ACC_DEPT_VAL(account_name, period, department)` is cloud-backed for tagged journal lines.
+- `XF1.ACC_DEPT_VAL(account_name, period, department)` is cloud-backed for the user-selected reporting tag across tagged journals, sales invoices, expenses, and bills.
 - The local desktop companion is legacy prototype code and is not the default pilot path.
 
 ## Safe operating sequence
@@ -17,8 +17,9 @@ For a normal user flow:
 1. Open the add-in.
 2. Save `Cloud Identity`.
 3. Run `Connect Zoho`.
-4. Run `Sync Accounting Data`.
-5. Use `XF1.ACC_VAL(...)` in the workbook.
+4. If dimension lookups are needed, select and save the reporting tag for `XF1.ACC_DEPT_VAL(...)`.
+5. Run `Sync Accounting Data`.
+6. Use `XF1.ACC_VAL(...)` or `XF1.ACC_DEPT_VAL(...)` in the workbook.
 
 For a test-data change:
 1. Post or adjust the Zoho entry.
@@ -57,6 +58,10 @@ Useful backend endpoints:
   - `/users/<user_id>/value?account_name=<account_name>&period=<yyyy-mm>`
 - Read cached department value:
   - `/users/<user_id>/value-by-department?account_name=<account_name>&period=<yyyy-mm>&department=<department_name>`
+- List available reporting tags:
+  - `/users/<user_id>/reporting-tags`
+- Read saved dimension tag:
+  - `/users/<user_id>/dimension-tag`
 
 Best operational check:
 1. Confirm `/health`.

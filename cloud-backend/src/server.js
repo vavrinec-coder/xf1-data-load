@@ -12,6 +12,8 @@ const {
   updateZohoConnectionTokens,
   getConnectionsForUser,
   getPrimaryConnectionForUser,
+  getDimensionConfig,
+  saveDimensionConfig,
   replaceUserOrgCache,
   getCacheStatus,
   getAccountPeriodValue,
@@ -167,11 +169,32 @@ function normalizeJournalLines(journals) {
   );
 }
 
-function getDepartmentTag(tags = []) {
-  return (tags || []).find((tag) => String(tag.tag_name || "").trim().toLowerCase() === "department");
+function getConfiguredDimensionTag(tags = [], dimensionTag = null) {
+  const normalizedTags = tags || [];
+  if (!dimensionTag) {
+    return null;
+  }
+
+  if (dimensionTag.reporting_tag_id) {
+    const byId = normalizedTags.find((tag) => String(tag.tag_id || "").trim() === String(dimensionTag.reporting_tag_id));
+    if (byId) {
+      return byId;
+    }
+  }
+
+  if (dimensionTag.reporting_tag_name) {
+    const targetName = String(dimensionTag.reporting_tag_name || "")
+      .trim()
+      .toLowerCase();
+    return (
+      normalizedTags.find((tag) => String(tag.tag_name || "").trim().toLowerCase() === targetName) || null
+    );
+  }
+
+  return null;
 }
 
-function normalizePostingLineFacts(accountRows, journals) {
+function normalizePostingLineFacts(accountRows, journals, dimensionTag) {
   const accountMap = new Map(accountRows.map((account) => [account.account_id, account]));
 
   return journals.flatMap((journal) =>
@@ -179,7 +202,7 @@ function normalizePostingLineFacts(accountRows, journals) {
       const account = accountMap.get(lineItem.account_id) || {};
       const amount = Number(lineItem.amount || 0);
       const signedAmountRaw = lineItem.debit_or_credit === "debit" ? amount : -amount;
-      const departmentTag = getDepartmentTag(lineItem.tags);
+      const departmentTag = getConfiguredDimensionTag(lineItem.tags, dimensionTag);
 
       return {
         source_module: "journal",
@@ -203,13 +226,13 @@ function normalizePostingLineFacts(accountRows, journals) {
   );
 }
 
-function normalizeInvoicePostingLineFacts(accountRows, itemRows, invoices) {
+function normalizeInvoicePostingLineFacts(accountRows, itemRows, invoices, dimensionTag) {
   const accountMap = new Map(accountRows.map((account) => [account.account_id, account]));
   const itemMap = new Map(itemRows.map((item) => [item.item_id, item]));
 
   return invoices.flatMap((invoice) =>
     (invoice.line_items || []).flatMap((lineItem) => {
-      const departmentTag = getDepartmentTag(lineItem.tags);
+      const departmentTag = getConfiguredDimensionTag(lineItem.tags, dimensionTag);
       if (!departmentTag) {
         return [];
       }
@@ -249,18 +272,18 @@ function normalizeInvoicePostingLineFacts(accountRows, itemRows, invoices) {
   );
 }
 
-function normalizeExpensePostingLineFacts(accountRows, expenses) {
+function normalizeExpensePostingLineFacts(accountRows, expenses, dimensionTag) {
   const accountMap = new Map(accountRows.map((account) => [account.account_id, account]));
 
   return expenses.flatMap((expense) => {
     const expenseDate = String(expense.date || "").trim();
     const expensePeriod = expenseDate.slice(0, 7);
-    const topLevelTag = getDepartmentTag(expense.tags);
+    const topLevelTag = getConfiguredDimensionTag(expense.tags, dimensionTag);
     const lineItems = expense.line_items || [];
 
     if (lineItems.length) {
       return lineItems.flatMap((lineItem, index) => {
-        const departmentTag = getDepartmentTag(lineItem.tags) || topLevelTag;
+        const departmentTag = getConfiguredDimensionTag(lineItem.tags, dimensionTag) || topLevelTag;
         if (!departmentTag) {
           return [];
         }
@@ -325,12 +348,14 @@ function normalizeExpensePostingLineFacts(accountRows, expenses) {
   });
 }
 
-function normalizeBillPostingLineFacts(accountRows, bills) {
+function normalizeBillPostingLineFacts(accountRows, bills, dimensionTag) {
   const accountMap = new Map(accountRows.map((account) => [account.account_id, account]));
 
   return bills.flatMap((bill) =>
     (bill.line_items || []).flatMap((lineItem, index) => {
-      const departmentTag = getDepartmentTag(lineItem.tags) || getDepartmentTag(bill.tags);
+      const departmentTag =
+        getConfiguredDimensionTag(lineItem.tags, dimensionTag) ||
+        getConfiguredDimensionTag(bill.tags, dimensionTag);
       if (!departmentTag) {
         return [];
       }
@@ -508,6 +533,41 @@ async function fetchChartOfAccounts(accessToken, organizationId, targetBooksBase
   });
 
   return response.data.chartofaccounts || [];
+}
+
+async function fetchReportingTags(accessToken, organizationId, targetBooksBaseUrl) {
+  const response = await axios.get(`${targetBooksBaseUrl}/reportingtags`, {
+    params: {
+      organization_id: organizationId,
+    },
+    headers: {
+      Authorization: `Zoho-oauthtoken ${accessToken}`,
+    },
+  });
+
+  const reportingTags = response.data.reporting_tags || response.data.reportingtags || [];
+  const enrichedTags = [];
+
+  for (const tag of reportingTags) {
+    const optionsResponse = await axios.get(`${targetBooksBaseUrl}/reportingtags/options`, {
+      params: {
+        organization_id: organizationId,
+        tag_id: tag.tag_id,
+      },
+      headers: {
+        Authorization: `Zoho-oauthtoken ${accessToken}`,
+      },
+    });
+
+    enrichedTags.push({
+      tag_id: tag.tag_id,
+      tag_name: tag.tag_name,
+      status: tag.status || tag.reporting_tag_status || "",
+      options: optionsResponse.data.tag_options || [],
+    });
+  }
+
+  return enrichedTags;
 }
 
 async function fetchAllJournals(accessToken, organizationId, targetBooksBaseUrl) {
@@ -817,6 +877,24 @@ async function getAuthenticatedConnection(userId) {
     ...connection,
     live_access_token: accessToken,
   };
+}
+
+async function getResolvedDimensionTag(userId, organizationId, accessToken, targetBooksBaseUrl) {
+  const configured = await getDimensionConfig(userId, organizationId);
+  if (configured) {
+    return configured;
+  }
+
+  const reportingTags = await fetchReportingTags(accessToken, organizationId, targetBooksBaseUrl);
+  const legacyDepartmentTag =
+    reportingTags.find((tag) => String(tag.tag_name || "").trim().toLowerCase() === "department") || null;
+
+  return legacyDepartmentTag
+    ? {
+        reporting_tag_id: legacyDepartmentTag.tag_id,
+        reporting_tag_name: legacyDepartmentTag.tag_name,
+      }
+    : null;
 }
 
 app.post("/internal/pilot/seed-adapter-test-data", async (req, res) => {
@@ -1166,6 +1244,103 @@ app.get("/users/:userId/cache-status", async (req, res) => {
   }
 });
 
+app.get("/users/:userId/reporting-tags", async (req, res) => {
+  try {
+    const userId = String(req.params.userId || "").trim();
+    if (!userId) {
+      res.status(400).json({ error: "Missing userId." });
+      return;
+    }
+
+    const connection = await getAuthenticatedConnection(userId);
+    const accessToken = connection.live_access_token;
+    const organizationId = connection.zoho_organization_id;
+    const reportingTags = await fetchReportingTags(accessToken, organizationId, connection.zoho_books_base_url);
+    const selected = await getDimensionConfig(userId, organizationId);
+
+    res.json({
+      user_id: userId,
+      organization_id: organizationId,
+      organization_name: connection.zoho_organization_name,
+      selected_dimension_tag_id: selected?.reporting_tag_id || null,
+      selected_dimension_tag_name: selected?.reporting_tag_name || null,
+      count: reportingTags.length,
+      reporting_tags: reportingTags,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get("/users/:userId/dimension-tag", async (req, res) => {
+  try {
+    const userId = String(req.params.userId || "").trim();
+    if (!userId) {
+      res.status(400).json({ error: "Missing userId." });
+      return;
+    }
+
+    const connection = await getPrimaryConnectionForUser(userId);
+    if (!connection) {
+      res.status(404).json({ error: "No Zoho connection found for this user." });
+      return;
+    }
+
+    const selected = await getDimensionConfig(userId, connection.zoho_organization_id);
+    res.json({
+      user_id: userId,
+      organization_id: connection.zoho_organization_id,
+      organization_name: connection.zoho_organization_name,
+      reporting_tag_id: selected?.reporting_tag_id || null,
+      reporting_tag_name: selected?.reporting_tag_name || null,
+      configured: Boolean(selected),
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/users/:userId/dimension-tag", async (req, res) => {
+  try {
+    const userId = String(req.params.userId || "").trim();
+    const requestedTagId = String(req.body?.reporting_tag_id || "").trim();
+
+    if (!userId || !requestedTagId) {
+      res.status(400).json({ error: "Provide userId and reporting_tag_id." });
+      return;
+    }
+
+    const connection = await getAuthenticatedConnection(userId);
+    const accessToken = connection.live_access_token;
+    const organizationId = connection.zoho_organization_id;
+    const reportingTags = await fetchReportingTags(accessToken, organizationId, connection.zoho_books_base_url);
+    const selectedTag = reportingTags.find((tag) => String(tag.tag_id || "").trim() === requestedTagId);
+
+    if (!selectedTag) {
+      res.status(400).json({ error: "Reporting tag not found in this Zoho organization." });
+      return;
+    }
+
+    const saved = await saveDimensionConfig(
+      userId,
+      organizationId,
+      selectedTag.tag_id,
+      selectedTag.tag_name
+    );
+
+    res.json({
+      user_id: userId,
+      organization_id: organizationId,
+      organization_name: connection.zoho_organization_name,
+      configured: true,
+      reporting_tag_id: saved.reporting_tag_id,
+      reporting_tag_name: saved.reporting_tag_name,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get("/users/:userId/value", async (req, res) => {
   try {
     const userId = String(req.params.userId || "").trim();
@@ -1320,6 +1495,12 @@ app.get("/users/:userId/sync", async (req, res) => {
     const connection = await getAuthenticatedConnection(userId);
     const accessToken = connection.live_access_token;
     const organizationId = connection.zoho_organization_id;
+    const selectedDimensionTag = await getResolvedDimensionTag(
+      userId,
+      organizationId,
+      accessToken,
+      connection.zoho_books_base_url
+    );
 
     const accounts = await fetchChartOfAccounts(accessToken, organizationId, connection.zoho_books_base_url);
     const normalizedAccounts = normalizeAccounts(accounts);
@@ -1423,10 +1604,10 @@ app.get("/users/:userId/sync", async (req, res) => {
     }
 
     const postingLineRows = [
-      ...normalizePostingLineFacts(normalizedAccounts, detailedJournals),
-      ...normalizeInvoicePostingLineFacts(normalizedAccounts, items, detailedInvoices),
-      ...normalizeExpensePostingLineFacts(normalizedAccounts, detailedExpenses),
-      ...normalizeBillPostingLineFacts(normalizedAccounts, detailedBills),
+      ...normalizePostingLineFacts(normalizedAccounts, detailedJournals, selectedDimensionTag),
+      ...normalizeInvoicePostingLineFacts(normalizedAccounts, items, detailedInvoices, selectedDimensionTag),
+      ...normalizeExpensePostingLineFacts(normalizedAccounts, detailedExpenses, selectedDimensionTag),
+      ...normalizeBillPostingLineFacts(normalizedAccounts, detailedBills, selectedDimensionTag),
     ].filter((row) => row.account_name && row.period && row.department_name);
     const distinctPeriods = [...new Set([...lineRows, ...postingLineRows].map((row) => row.period).filter(Boolean))].sort();
     const periodRange = buildPeriodRange(distinctPeriods);
@@ -1442,6 +1623,7 @@ app.get("/users/:userId/sync", async (req, res) => {
     const summary = {
       organization_id: organizationId,
       organization_name: connection.zoho_organization_name,
+      dimension_tag_name: selectedDimensionTag?.reporting_tag_name || null,
       account_count: normalizedAccounts.length,
       journal_count: detailedJournals.length,
       transaction_count: transactionRows.length,

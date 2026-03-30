@@ -41,6 +41,20 @@
       </section>
 
       <section class="xf1-section">
+        <h2>Dimension Tag</h2>
+        <p class="xf1-help">Choose which Zoho reporting tag should drive <code>XF1.ACC_DEPT_VAL(...)</code>.</p>
+        <div class="xf1-format-group">
+          <label>Reporting Tag
+            <select id="dimension-tag-select" disabled>
+              <option value="">Connect Zoho to load reporting tags</option>
+            </select>
+          </label>
+        </div>
+        <button id="save-dimension-tag" class="xf1-button xf1-button-secondary">Save Dimension Tag</button>
+        <div id="dimension-tag-status" class="xf1-card"></div>
+      </section>
+
+      <section class="xf1-section">
         <h2>Actions</h2>
         <div class="xf1-button-grid">
           <button id="connect-zoho" class="xf1-button xf1-button-primary">Connect Zoho</button>

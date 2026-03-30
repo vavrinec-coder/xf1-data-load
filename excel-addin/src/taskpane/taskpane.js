@@ -50,6 +50,28 @@ async function fetchJson(url) {
   return response.json();
 }
 
+async function postJson(url, body) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body || {}),
+  });
+  const contentType = response.headers.get("content-type") || "";
+
+  if (!response.ok) {
+    if (contentType.includes("application/json")) {
+      const errorJson = await response.json();
+      throw new Error(errorJson.message || errorJson.error || `${response.status}`);
+    }
+
+    throw new Error(`${response.status} ${response.statusText}`);
+  }
+
+  return contentType.includes("application/json") ? response.json() : {};
+}
+
 function normalizeHexColor(value) {
   const trimmed = String(value || "").trim();
   if (/^#[0-9A-Fa-f]{6}$/.test(trimmed)) {
@@ -133,6 +155,65 @@ async function refreshCloudStatus() {
   }
 }
 
+function setDimensionTagOptions(reportingTags, selectedTagId) {
+  const select = document.getElementById("dimension-tag-select");
+  select.innerHTML = "";
+
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = reportingTags.length
+    ? "Select reporting tag"
+    : "No reporting tags available";
+  select.appendChild(placeholder);
+
+  reportingTags.forEach((tag) => {
+    const option = document.createElement("option");
+    option.value = tag.tag_id;
+    option.textContent = `${tag.tag_name} (${(tag.options || []).length} options)`;
+    if (selectedTagId && tag.tag_id === selectedTagId) {
+      option.selected = true;
+    }
+    select.appendChild(option);
+  });
+}
+
+async function refreshDimensionTagStatus() {
+  const identity = getCloudIdentity();
+  const container = document.getElementById("dimension-tag-status");
+  const select = document.getElementById("dimension-tag-select");
+
+  if (!identity.email) {
+    setDimensionTagOptions([], null);
+    select.disabled = true;
+    container.innerHTML = "<div><strong>Dimension Tag:</strong> Save your email first.</div>";
+    return;
+  }
+
+  try {
+    const encodedUserId = encodeURIComponent(identity.email);
+    const result = await fetchJson(`${CLOUD_API_BASE_URL}/users/${encodedUserId}/reporting-tags`);
+    setDimensionTagOptions(result.reporting_tags || [], result.selected_dimension_tag_id || null);
+    select.disabled = false;
+
+    if (!result.selected_dimension_tag_name) {
+      container.innerHTML = `
+        <div><strong>Organization:</strong> ${result.organization_name || "Unknown"}</div>
+        <div><strong>Selected Tag:</strong> Not configured yet</div>
+      `;
+      return;
+    }
+
+    container.innerHTML = `
+      <div><strong>Organization:</strong> ${result.organization_name || "Unknown"}</div>
+      <div><strong>Selected Tag:</strong> ${result.selected_dimension_tag_name}</div>
+    `;
+  } catch (error) {
+    setDimensionTagOptions([], null);
+    select.disabled = true;
+    container.textContent = error.message;
+  }
+}
+
 async function refreshSyncStatus() {
   const identity = getCloudIdentity();
   const container = document.getElementById("cache-status");
@@ -153,6 +234,7 @@ async function refreshSyncStatus() {
       <div><strong>Journal Lines:</strong> ${status.journal_line_count || 0}</div>
       <div><strong>Account Periods:</strong> ${status.account_period_count || 0}</div>
       <div><strong>Dept Periods:</strong> ${status.account_period_department_count || 0}</div>
+      <div><strong>Dimension Tag:</strong> ${status.dimension_tag_name || "Not configured"}</div>
     `;
   } catch (error) {
     container.textContent = error.message;
@@ -160,7 +242,7 @@ async function refreshSyncStatus() {
 }
 
 async function refreshStatus() {
-  await Promise.all([refreshCloudStatus(), refreshSyncStatus()]);
+  await Promise.all([refreshCloudStatus(), refreshDimensionTagStatus(), refreshSyncStatus()]);
 }
 
 async function openZohoConnect() {
@@ -191,6 +273,27 @@ async function syncAccountingData() {
     });
 
     setStatus(`Synced ${result.journal_count} journals across ${result.periods.length} period(s).`);
+    await refreshStatus();
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+async function saveDimensionTag() {
+  try {
+    const identity = await saveCloudIdentity();
+    const reportingTagId = String(document.getElementById("dimension-tag-select").value || "").trim();
+
+    if (!reportingTagId) {
+      throw new Error("Select a reporting tag before saving.");
+    }
+
+    const encodedUserId = encodeURIComponent(identity.email);
+    const result = await postJson(`${CLOUD_API_BASE_URL}/users/${encodedUserId}/dimension-tag`, {
+      reporting_tag_id: reportingTagId,
+    });
+
+    setStatus(`Dimension tag saved as ${result.reporting_tag_name}.`);
     await refreshStatus();
   } catch (error) {
     setStatus(error.message, true);
@@ -312,6 +415,7 @@ Office.onReady(() => {
   setCloudIdentityInputs(getCloudIdentity());
 
   document.getElementById("save-identity").onclick = handleSaveIdentity;
+  document.getElementById("save-dimension-tag").onclick = saveDimensionTag;
   document.getElementById("connect-zoho").onclick = openZohoConnect;
   document.getElementById("sync-data").onclick = syncAccountingData;
   document.getElementById("replace-values").onclick = replaceAccValWithValues;

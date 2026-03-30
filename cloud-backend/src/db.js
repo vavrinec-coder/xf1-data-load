@@ -165,6 +165,18 @@ async function migrate() {
       PRIMARY KEY (xf1_user_id, zoho_organization_id, key)
     );
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_org_dimension_config (
+      xf1_user_id TEXT NOT NULL REFERENCES xf1_user(id) ON DELETE CASCADE,
+      zoho_organization_id TEXT NOT NULL,
+      reporting_tag_id TEXT NOT NULL,
+      reporting_tag_name TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (xf1_user_id, zoho_organization_id)
+    );
+  `);
 }
 
 async function ensureUser(userId, email = null, displayName = null) {
@@ -303,6 +315,54 @@ async function getPrimaryConnectionForUser(userId) {
       LIMIT 1
     `,
     [userId]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function getDimensionConfig(userId, organizationId) {
+  const result = await pool.query(
+    `
+      SELECT
+        xf1_user_id,
+        zoho_organization_id,
+        reporting_tag_id,
+        reporting_tag_name,
+        created_at,
+        updated_at
+      FROM user_org_dimension_config
+      WHERE xf1_user_id = $1 AND zoho_organization_id = $2
+      LIMIT 1
+    `,
+    [userId, organizationId]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function saveDimensionConfig(userId, organizationId, reportingTagId, reportingTagName) {
+  const result = await pool.query(
+    `
+      INSERT INTO user_org_dimension_config (
+        xf1_user_id,
+        zoho_organization_id,
+        reporting_tag_id,
+        reporting_tag_name
+      ) VALUES ($1,$2,$3,$4)
+      ON CONFLICT (xf1_user_id, zoho_organization_id) DO UPDATE
+      SET
+        reporting_tag_id = EXCLUDED.reporting_tag_id,
+        reporting_tag_name = EXCLUDED.reporting_tag_name,
+        updated_at = NOW()
+      RETURNING
+        xf1_user_id,
+        zoho_organization_id,
+        reporting_tag_id,
+        reporting_tag_name,
+        created_at,
+        updated_at
+    `,
+    [userId, organizationId, reportingTagId, reportingTagName]
   );
 
   return result.rows[0] || null;
@@ -581,12 +641,15 @@ async function getCacheStatus(userId, organizationId) {
   );
 
   const syncMap = new Map(syncResult.rows.map((row) => [row.key, row.value]));
+  const dimensionConfig = await getDimensionConfig(userId, organizationId);
 
   return {
     last_refresh_at: syncMap.get("last_refresh_at") || null,
     last_refresh_summary: syncMap.get("last_refresh_summary")
       ? JSON.parse(syncMap.get("last_refresh_summary"))
       : null,
+    dimension_tag_id: dimensionConfig?.reporting_tag_id || null,
+    dimension_tag_name: dimensionConfig?.reporting_tag_name || null,
     account_dim_count: Number(countsResult.rows[0]?.account_dim_count || 0),
     journal_line_count: Number(countsResult.rows[0]?.journal_line_count || 0),
     account_period_count: Number(countsResult.rows[0]?.account_period_count || 0),
@@ -689,6 +752,8 @@ module.exports = {
   updateZohoConnectionTokens,
   getConnectionsForUser,
   getPrimaryConnectionForUser,
+  getDimensionConfig,
+  saveDimensionConfig,
   replaceUserOrgCache,
   getCacheStatus,
   getAccountPeriodValue,
