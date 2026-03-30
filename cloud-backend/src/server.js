@@ -1007,6 +1007,85 @@ app.post("/internal/pilot/seed-adapter-test-data", async (req, res) => {
   }
 });
 
+app.post("/internal/pilot/seed-bill-test", async (req, res) => {
+  try {
+    const internalKey = String(req.query.key || req.body?.key || "").trim();
+    const userId = String(req.query.user_id || req.body?.user_id || "").trim();
+
+    if (!internalKey || (internalKey !== sessionSecret && internalKey !== clientSecret)) {
+      res.status(403).json({ error: "Forbidden." });
+      return;
+    }
+
+    if (!userId) {
+      res.status(400).json({ error: "Provide user_id." });
+      return;
+    }
+
+    const connection = await getAuthenticatedConnection(userId);
+    const accessToken = connection.live_access_token;
+    const organizationId = connection.zoho_organization_id;
+    const timestamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+    const headers = { Authorization: `Zoho-oauthtoken ${accessToken}` };
+
+    const books = axios.create({
+      baseURL: connection.zoho_books_base_url,
+      headers,
+    });
+
+    const accounts = normalizeAccounts(
+      await fetchChartOfAccounts(accessToken, organizationId, connection.zoho_books_base_url)
+    );
+    const consultantAccount =
+      accounts.find((account) => account.account_name === "Consultant Expense") ||
+      accounts.find((account) => account.account_name === "Other Expenses");
+
+    if (!consultantAccount) {
+      res.status(400).json({ error: "Consultant Expense account not found." });
+      return;
+    }
+
+    const vendorResponse = await books.post(`/contacts?organization_id=${organizationId}`, {
+      contact_name: `XF1 Pilot Bill Vendor ${timestamp}`,
+      company_name: `XF1 Pilot Bill Vendor ${timestamp}`,
+      contact_type: "vendor",
+    });
+    const vendor = vendorResponse.data.contact;
+
+    const billResponse = await books.post(`/bills?organization_id=${organizationId}`, {
+      vendor_id: vendor.contact_id,
+      date: "2026-03-30",
+      line_items: [
+        {
+          name: `XF1 Pilot Bill Service ${timestamp}`,
+          rate: 6500,
+          quantity: 1,
+          account_id: consultantAccount.account_id,
+          description: "Bill adapter tag test",
+          tags: [{ tag_id: pilotDepartmentTag.tag_id, tag_option_id: pilotDepartmentTag.operations_option_id }],
+        },
+      ],
+      notes: "Pilot tagged bill for adapter validation",
+    });
+
+    res.json({
+      ok: true,
+      user_id: userId,
+      organization_id: organizationId,
+      vendor_name: vendor.contact_name,
+      bill: {
+        bill_id: billResponse.data.bill?.bill_id,
+        bill_number: billResponse.data.bill?.bill_number || null,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: error.message,
+      details: error.response?.data || null,
+    });
+  }
+});
+
 app.get("/", (_req, res) => {
   res.json({
     service: "xf1-cloud-backend",
