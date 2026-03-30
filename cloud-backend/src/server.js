@@ -167,6 +167,10 @@ function normalizeJournalLines(journals) {
   );
 }
 
+function getDepartmentTag(tags = []) {
+  return (tags || []).find((tag) => String(tag.tag_name || "").trim().toLowerCase() === "department");
+}
+
 function normalizePostingLineFacts(accountRows, journals) {
   const accountMap = new Map(accountRows.map((account) => [account.account_id, account]));
 
@@ -175,9 +179,7 @@ function normalizePostingLineFacts(accountRows, journals) {
       const account = accountMap.get(lineItem.account_id) || {};
       const amount = Number(lineItem.amount || 0);
       const signedAmountRaw = lineItem.debit_or_credit === "debit" ? amount : -amount;
-      const departmentTag = (lineItem.tags || []).find(
-        (tag) => String(tag.tag_name || "").trim().toLowerCase() === "department"
-      );
+      const departmentTag = getDepartmentTag(lineItem.tags);
 
       return {
         source_module: "journal",
@@ -197,6 +199,52 @@ function normalizePostingLineFacts(accountRows, journals) {
         department_tag_id: departmentTag?.tag_option_id || null,
         department_name: departmentTag?.tag_option_name || null,
       };
+    })
+  );
+}
+
+function normalizeInvoicePostingLineFacts(accountRows, itemRows, invoices) {
+  const accountMap = new Map(accountRows.map((account) => [account.account_id, account]));
+  const itemMap = new Map(itemRows.map((item) => [item.item_id, item]));
+
+  return invoices.flatMap((invoice) =>
+    (invoice.line_items || []).flatMap((lineItem) => {
+      const departmentTag = getDepartmentTag(lineItem.tags);
+      if (!departmentTag) {
+        return [];
+      }
+
+      const item = itemMap.get(lineItem.item_id) || {};
+      const accountId = lineItem.account_id || item.account_id || item.sales_account_id || "";
+      const account = accountMap.get(accountId) || {};
+      const amountRaw = Number(
+        lineItem.item_total ||
+          lineItem.item_sub_total ||
+          lineItem.amount ||
+          Number(lineItem.rate || 0) * Number(lineItem.quantity || 0)
+      );
+      const amount = Number.isFinite(amountRaw) ? amountRaw : 0;
+
+      return [
+        {
+          source_module: "invoice",
+          source_txn_id: invoice.invoice_id,
+          source_line_id: lineItem.line_item_id || `${invoice.invoice_id}::${lineItem.item_id || "unknown-item"}`,
+          posting_date: invoice.date,
+          period: String(invoice.date || "").slice(0, 7),
+          account_id: accountId,
+          account_name: lineItem.account_name || account.account_name || item.account_name || "",
+          account_type: account.account_type || "",
+          statement_type: account.statement_type || getStatementType(account.account_type),
+          debit_or_credit: "credit",
+          amount: Number(amount.toFixed(2)),
+          signed_amount_raw: Number((-amount).toFixed(2)),
+          reference_number: invoice.invoice_number || "",
+          description: lineItem.description || invoice.notes || "",
+          department_tag_id: departmentTag.tag_option_id || null,
+          department_name: departmentTag.tag_option_name || null,
+        },
+      ];
     })
   );
 }
@@ -369,6 +417,79 @@ async function fetchAllJournals(accessToken, organizationId, targetBooksBaseUrl)
   }
 
   return allJournals;
+}
+
+async function fetchAllInvoices(accessToken, organizationId, targetBooksBaseUrl) {
+  const allInvoices = [];
+  let page = 1;
+  const perPage = 200;
+
+  while (true) {
+    const response = await axios.get(`${targetBooksBaseUrl}/invoices`, {
+      params: {
+        organization_id: organizationId,
+        page,
+        per_page: perPage,
+      },
+      headers: {
+        Authorization: `Zoho-oauthtoken ${accessToken}`,
+      },
+    });
+
+    const invoices = response.data.invoices || [];
+    allInvoices.push(...invoices);
+
+    if (invoices.length < perPage) {
+      break;
+    }
+
+    page += 1;
+  }
+
+  return allInvoices;
+}
+
+async function fetchInvoiceDetails(accessToken, organizationId, invoiceId, targetBooksBaseUrl) {
+  const response = await axios.get(`${targetBooksBaseUrl}/invoices/${invoiceId}`, {
+    params: {
+      organization_id: organizationId,
+    },
+    headers: {
+      Authorization: `Zoho-oauthtoken ${accessToken}`,
+    },
+  });
+
+  return response.data.invoice;
+}
+
+async function fetchAllItems(accessToken, organizationId, targetBooksBaseUrl) {
+  const allItems = [];
+  let page = 1;
+  const perPage = 200;
+
+  while (true) {
+    const response = await axios.get(`${targetBooksBaseUrl}/items`, {
+      params: {
+        organization_id: organizationId,
+        page,
+        per_page: perPage,
+      },
+      headers: {
+        Authorization: `Zoho-oauthtoken ${accessToken}`,
+      },
+    });
+
+    const items = response.data.items || [];
+    allItems.push(...items);
+
+    if (items.length < perPage) {
+      break;
+    }
+
+    page += 1;
+  }
+
+  return allItems;
 }
 
 async function fetchJournalDetails(accessToken, organizationId, journalId, targetBooksBaseUrl) {
@@ -962,9 +1083,29 @@ app.get("/users/:userId/sync", async (req, res) => {
       detailedJournals.push(...details);
     }
 
-    const postingLineRows = normalizePostingLineFacts(normalizedAccounts, detailedJournals).filter(
-      (row) => row.account_name && row.period && row.department_name
-    );
+    const items = await fetchAllItems(accessToken, organizationId, connection.zoho_books_base_url);
+    const invoices = await fetchAllInvoices(accessToken, organizationId, connection.zoho_books_base_url);
+    const detailedInvoices = [];
+    const invoiceBatches = chunk(invoices, 10);
+
+    for (const invoiceBatch of invoiceBatches) {
+      const details = await Promise.all(
+        invoiceBatch.map((invoice) =>
+          fetchInvoiceDetails(
+            accessToken,
+            organizationId,
+            invoice.invoice_id,
+            connection.zoho_books_base_url
+          )
+        )
+      );
+      detailedInvoices.push(...details);
+    }
+
+    const postingLineRows = [
+      ...normalizePostingLineFacts(normalizedAccounts, detailedJournals),
+      ...normalizeInvoicePostingLineFacts(normalizedAccounts, items, detailedInvoices),
+    ].filter((row) => row.account_name && row.period && row.department_name);
     const refreshedAt = new Date().toISOString();
     const accountPeriodRows = buildAccountPeriodRows(normalizedAccounts, lineRows, periodRange, refreshedAt);
     const accountPeriodDepartmentRows = buildAccountPeriodDepartmentRows(
@@ -981,6 +1122,7 @@ app.get("/users/:userId/sync", async (req, res) => {
       journal_count: detailedJournals.length,
       transaction_count: transactionRows.length,
       line_count: lineRows.length,
+      invoice_count: detailedInvoices.length,
       posting_line_fact_count: postingLineRows.length,
       account_period_department_count: accountPeriodDepartmentRows.length,
       periods: periodRange,
