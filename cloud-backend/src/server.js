@@ -325,6 +325,51 @@ function normalizeExpensePostingLineFacts(accountRows, expenses) {
   });
 }
 
+function normalizeBillPostingLineFacts(accountRows, bills) {
+  const accountMap = new Map(accountRows.map((account) => [account.account_id, account]));
+
+  return bills.flatMap((bill) =>
+    (bill.line_items || []).flatMap((lineItem, index) => {
+      const departmentTag = getDepartmentTag(lineItem.tags) || getDepartmentTag(bill.tags);
+      if (!departmentTag) {
+        return [];
+      }
+
+      const billDate = String(bill.date || "").trim();
+      const accountId = lineItem.account_id || bill.account_id || "";
+      const account = accountMap.get(accountId) || {};
+      const amountRaw = Number(
+        lineItem.item_total ||
+          lineItem.item_total_inclusive_of_tax ||
+          lineItem.amount ||
+          Number(lineItem.rate || 0) * Number(lineItem.quantity || 0)
+      );
+      const amount = Number.isFinite(amountRaw) ? amountRaw : 0;
+
+      return [
+        {
+          source_module: "bill",
+          source_txn_id: bill.bill_id,
+          source_line_id: lineItem.line_item_id || `${bill.bill_id}::${index}`,
+          posting_date: billDate,
+          period: billDate.slice(0, 7),
+          account_id: accountId,
+          account_name: lineItem.account_name || account.account_name || "",
+          account_type: account.account_type || "",
+          statement_type: account.statement_type || getStatementType(account.account_type),
+          debit_or_credit: "debit",
+          amount: Number(amount.toFixed(2)),
+          signed_amount_raw: Number(amount.toFixed(2)),
+          reference_number: bill.bill_number || bill.reference_number || "",
+          description: lineItem.description || bill.notes || "",
+          department_tag_id: departmentTag.tag_option_id || null,
+          department_name: departmentTag.tag_option_name || null,
+        },
+      ];
+    })
+  );
+}
+
 function buildAccountPeriodDepartmentRows(accountRows, postingLineRows, periods, refreshedAt) {
   const movementMap = new Map();
   const accountDepartmentMap = new Map();
@@ -609,6 +654,49 @@ async function fetchExpenseDetails(accessToken, organizationId, expenseId, targe
   });
 
   return response.data.expense;
+}
+
+async function fetchAllBills(accessToken, organizationId, targetBooksBaseUrl) {
+  const allBills = [];
+  let page = 1;
+  const perPage = 200;
+
+  while (true) {
+    const response = await axios.get(`${targetBooksBaseUrl}/bills`, {
+      params: {
+        organization_id: organizationId,
+        page,
+        per_page: perPage,
+      },
+      headers: {
+        Authorization: `Zoho-oauthtoken ${accessToken}`,
+      },
+    });
+
+    const bills = response.data.bills || [];
+    allBills.push(...bills);
+
+    if (bills.length < perPage) {
+      break;
+    }
+
+    page += 1;
+  }
+
+  return allBills;
+}
+
+async function fetchBillDetails(accessToken, organizationId, billId, targetBooksBaseUrl) {
+  const response = await axios.get(`${targetBooksBaseUrl}/bills/${billId}`, {
+    params: {
+      organization_id: organizationId,
+    },
+    headers: {
+      Authorization: `Zoho-oauthtoken ${accessToken}`,
+    },
+  });
+
+  return response.data.bill;
 }
 
 async function fetchJournalDetails(accessToken, organizationId, journalId, targetBooksBaseUrl) {
@@ -1237,10 +1325,29 @@ app.get("/users/:userId/sync", async (req, res) => {
       detailedExpenses.push(...details);
     }
 
+    const bills = await fetchAllBills(accessToken, organizationId, connection.zoho_books_base_url);
+    const detailedBills = [];
+    const billBatches = chunk(bills, 10);
+
+    for (const billBatch of billBatches) {
+      const details = await Promise.all(
+        billBatch.map((bill) =>
+          fetchBillDetails(
+            accessToken,
+            organizationId,
+            bill.bill_id,
+            connection.zoho_books_base_url
+          )
+        )
+      );
+      detailedBills.push(...details);
+    }
+
     const postingLineRows = [
       ...normalizePostingLineFacts(normalizedAccounts, detailedJournals),
       ...normalizeInvoicePostingLineFacts(normalizedAccounts, items, detailedInvoices),
       ...normalizeExpensePostingLineFacts(normalizedAccounts, detailedExpenses),
+      ...normalizeBillPostingLineFacts(normalizedAccounts, detailedBills),
     ].filter((row) => row.account_name && row.period && row.department_name);
     const distinctPeriods = [...new Set([...lineRows, ...postingLineRows].map((row) => row.period).filter(Boolean))].sort();
     const periodRange = buildPeriodRange(distinctPeriods);
@@ -1262,6 +1369,7 @@ app.get("/users/:userId/sync", async (req, res) => {
       line_count: lineRows.length,
       invoice_count: detailedInvoices.length,
       expense_count: detailedExpenses.length,
+      bill_count: detailedBills.length,
       posting_line_fact_count: postingLineRows.length,
       account_period_department_count: accountPeriodDepartmentRows.length,
       periods: periodRange,
