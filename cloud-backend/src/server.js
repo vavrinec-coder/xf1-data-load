@@ -249,6 +249,82 @@ function normalizeInvoicePostingLineFacts(accountRows, itemRows, invoices) {
   );
 }
 
+function normalizeExpensePostingLineFacts(accountRows, expenses) {
+  const accountMap = new Map(accountRows.map((account) => [account.account_id, account]));
+
+  return expenses.flatMap((expense) => {
+    const expenseDate = String(expense.date || "").trim();
+    const expensePeriod = expenseDate.slice(0, 7);
+    const topLevelTag = getDepartmentTag(expense.tags);
+    const lineItems = expense.line_items || [];
+
+    if (lineItems.length) {
+      return lineItems.flatMap((lineItem, index) => {
+        const departmentTag = getDepartmentTag(lineItem.tags) || topLevelTag;
+        if (!departmentTag) {
+          return [];
+        }
+
+        const accountId = lineItem.account_id || expense.account_id || "";
+        const account = accountMap.get(accountId) || {};
+        const amountRaw = Number(lineItem.amount || lineItem.item_total || expense.amount || 0);
+        const amount = Number.isFinite(amountRaw) ? amountRaw : 0;
+
+        return [
+          {
+            source_module: "expense",
+            source_txn_id: expense.expense_id,
+            source_line_id: lineItem.line_item_id || `${expense.expense_id}::${index}`,
+            posting_date: expenseDate,
+            period: expensePeriod,
+            account_id: accountId,
+            account_name: lineItem.account_name || account.account_name || expense.account_name || "",
+            account_type: account.account_type || "",
+            statement_type: account.statement_type || getStatementType(account.account_type),
+            debit_or_credit: "debit",
+            amount: Number(amount.toFixed(2)),
+            signed_amount_raw: Number(amount.toFixed(2)),
+            reference_number: expense.reference_number || "",
+            description: lineItem.description || expense.description || "",
+            department_tag_id: departmentTag.tag_option_id || null,
+            department_name: departmentTag.tag_option_name || null,
+          },
+        ];
+      });
+    }
+
+    if (!topLevelTag) {
+      return [];
+    }
+
+    const accountId = expense.account_id || "";
+    const account = accountMap.get(accountId) || {};
+    const amountRaw = Number(expense.amount || 0);
+    const amount = Number.isFinite(amountRaw) ? amountRaw : 0;
+
+    return [
+      {
+        source_module: "expense",
+        source_txn_id: expense.expense_id,
+        source_line_id: expense.expense_id,
+        posting_date: expenseDate,
+        period: expensePeriod,
+        account_id: accountId,
+        account_name: expense.account_name || account.account_name || "",
+        account_type: account.account_type || "",
+        statement_type: account.statement_type || getStatementType(account.account_type),
+        debit_or_credit: "debit",
+        amount: Number(amount.toFixed(2)),
+        signed_amount_raw: Number(amount.toFixed(2)),
+        reference_number: expense.reference_number || "",
+        description: expense.description || "",
+        department_tag_id: topLevelTag.tag_option_id || null,
+        department_name: topLevelTag.tag_option_name || null,
+      },
+    ];
+  });
+}
+
 function buildAccountPeriodDepartmentRows(accountRows, postingLineRows, periods, refreshedAt) {
   const movementMap = new Map();
   const accountDepartmentMap = new Map();
@@ -490,6 +566,49 @@ async function fetchAllItems(accessToken, organizationId, targetBooksBaseUrl) {
   }
 
   return allItems;
+}
+
+async function fetchAllExpenses(accessToken, organizationId, targetBooksBaseUrl) {
+  const allExpenses = [];
+  let page = 1;
+  const perPage = 200;
+
+  while (true) {
+    const response = await axios.get(`${targetBooksBaseUrl}/expenses`, {
+      params: {
+        organization_id: organizationId,
+        page,
+        per_page: perPage,
+      },
+      headers: {
+        Authorization: `Zoho-oauthtoken ${accessToken}`,
+      },
+    });
+
+    const expenses = response.data.expenses || [];
+    allExpenses.push(...expenses);
+
+    if (expenses.length < perPage) {
+      break;
+    }
+
+    page += 1;
+  }
+
+  return allExpenses;
+}
+
+async function fetchExpenseDetails(accessToken, organizationId, expenseId, targetBooksBaseUrl) {
+  const response = await axios.get(`${targetBooksBaseUrl}/expenses/${expenseId}`, {
+    params: {
+      organization_id: organizationId,
+    },
+    headers: {
+      Authorization: `Zoho-oauthtoken ${accessToken}`,
+    },
+  });
+
+  return response.data.expense;
 }
 
 async function fetchJournalDetails(accessToken, organizationId, journalId, targetBooksBaseUrl) {
@@ -1063,8 +1182,6 @@ app.get("/users/:userId/sync", async (req, res) => {
     const lineRows = normalizeAccountTransactions(normalizedAccounts, transactionRows).filter(
       (row) => row.account_name && row.period
     );
-    const distinctPeriods = [...new Set(lineRows.map((row) => row.period))].sort();
-    const periodRange = buildPeriodRange(distinctPeriods);
     const journals = await fetchAllJournals(accessToken, organizationId, connection.zoho_books_base_url);
     const detailedJournals = [];
     const journalBatches = chunk(journals, 10);
@@ -1102,10 +1219,31 @@ app.get("/users/:userId/sync", async (req, res) => {
       detailedInvoices.push(...details);
     }
 
+    const expenses = await fetchAllExpenses(accessToken, organizationId, connection.zoho_books_base_url);
+    const detailedExpenses = [];
+    const expenseBatches = chunk(expenses, 10);
+
+    for (const expenseBatch of expenseBatches) {
+      const details = await Promise.all(
+        expenseBatch.map((expense) =>
+          fetchExpenseDetails(
+            accessToken,
+            organizationId,
+            expense.expense_id,
+            connection.zoho_books_base_url
+          )
+        )
+      );
+      detailedExpenses.push(...details);
+    }
+
     const postingLineRows = [
       ...normalizePostingLineFacts(normalizedAccounts, detailedJournals),
       ...normalizeInvoicePostingLineFacts(normalizedAccounts, items, detailedInvoices),
+      ...normalizeExpensePostingLineFacts(normalizedAccounts, detailedExpenses),
     ].filter((row) => row.account_name && row.period && row.department_name);
+    const distinctPeriods = [...new Set([...lineRows, ...postingLineRows].map((row) => row.period).filter(Boolean))].sort();
+    const periodRange = buildPeriodRange(distinctPeriods);
     const refreshedAt = new Date().toISOString();
     const accountPeriodRows = buildAccountPeriodRows(normalizedAccounts, lineRows, periodRange, refreshedAt);
     const accountPeriodDepartmentRows = buildAccountPeriodDepartmentRows(
@@ -1123,6 +1261,7 @@ app.get("/users/:userId/sync", async (req, res) => {
       transaction_count: transactionRows.length,
       line_count: lineRows.length,
       invoice_count: detailedInvoices.length,
+      expense_count: detailedExpenses.length,
       posting_line_fact_count: postingLineRows.length,
       account_period_department_count: accountPeriodDepartmentRows.length,
       periods: periodRange,
