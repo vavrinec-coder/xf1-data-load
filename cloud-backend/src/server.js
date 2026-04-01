@@ -546,6 +546,9 @@ async function fetchReportingTags(accessToken, organizationId, targetBooksBaseUr
   });
 
   const reportingTags = response.data.reporting_tags || response.data.reportingtags || [];
+  if (!reportingTags.length) {
+    return fetchReportingTagsFromTaggedTransactions(accessToken, organizationId, targetBooksBaseUrl);
+  }
   const enrichedTags = [];
 
   for (const tag of reportingTags) {
@@ -565,6 +568,123 @@ async function fetchReportingTags(accessToken, organizationId, targetBooksBaseUr
       status: tag.status || tag.reporting_tag_status || "",
       options: optionsResponse.data.tag_options || [],
     });
+  }
+
+  return enrichedTags;
+}
+
+function collectUniqueTagCandidates(tagMap, tags = []) {
+  for (const tag of tags || []) {
+    const tagId = String(tag.tag_id || "").trim();
+    const tagName = String(tag.tag_name || "").trim();
+    if (!tagId || !tagName) {
+      continue;
+    }
+
+    const key = `${tagId}::${tagName}`;
+    if (!tagMap.has(key)) {
+      tagMap.set(key, {
+        tag_id: tagId,
+        tag_name: tagName,
+      });
+    }
+  }
+}
+
+async function fetchReportingTagsFromTaggedTransactions(accessToken, organizationId, targetBooksBaseUrl) {
+  const tagMap = new Map();
+
+  const journals = await fetchAllJournals(accessToken, organizationId, targetBooksBaseUrl);
+  const detailedJournals = [];
+  for (const batch of chunk(journals, 10)) {
+    const details = await Promise.all(
+      batch.map((journal) =>
+        fetchJournalDetails(accessToken, organizationId, journal.journal_id, targetBooksBaseUrl)
+      )
+    );
+    detailedJournals.push(...details);
+  }
+
+  detailedJournals.forEach((journal) => {
+    (journal.line_items || []).forEach((lineItem) => collectUniqueTagCandidates(tagMap, lineItem.tags));
+  });
+
+  const invoices = await fetchAllInvoices(accessToken, organizationId, targetBooksBaseUrl);
+  const detailedInvoices = [];
+  for (const batch of chunk(invoices, 10)) {
+    const details = await Promise.all(
+      batch.map((invoice) =>
+        fetchInvoiceDetails(accessToken, organizationId, invoice.invoice_id, targetBooksBaseUrl)
+      )
+    );
+    detailedInvoices.push(...details);
+  }
+
+  detailedInvoices.forEach((invoice) => {
+    (invoice.line_items || []).forEach((lineItem) => collectUniqueTagCandidates(tagMap, lineItem.tags));
+  });
+
+  const expenses = await fetchAllExpenses(accessToken, organizationId, targetBooksBaseUrl);
+  const detailedExpenses = [];
+  for (const batch of chunk(expenses, 10)) {
+    const details = await Promise.all(
+      batch.map((expense) =>
+        fetchExpenseDetails(accessToken, organizationId, expense.expense_id, targetBooksBaseUrl)
+      )
+    );
+    detailedExpenses.push(...details);
+  }
+
+  detailedExpenses.forEach((expense) => {
+    collectUniqueTagCandidates(tagMap, expense.tags);
+    (expense.line_items || []).forEach((lineItem) => collectUniqueTagCandidates(tagMap, lineItem.tags));
+  });
+
+  const bills = await fetchAllBills(accessToken, organizationId, targetBooksBaseUrl);
+  const detailedBills = [];
+  for (const batch of chunk(bills, 10)) {
+    const details = await Promise.all(
+      batch.map((bill) =>
+        fetchBillDetails(accessToken, organizationId, bill.bill_id, targetBooksBaseUrl)
+      )
+    );
+    detailedBills.push(...details);
+  }
+
+  detailedBills.forEach((bill) => {
+    collectUniqueTagCandidates(tagMap, bill.tags);
+    (bill.line_items || []).forEach((lineItem) => collectUniqueTagCandidates(tagMap, lineItem.tags));
+  });
+
+  const candidates = [...tagMap.values()];
+  const enrichedTags = [];
+
+  for (const candidate of candidates) {
+    try {
+      const optionsResponse = await axios.get(`${targetBooksBaseUrl}/reportingtags/options`, {
+        params: {
+          organization_id: organizationId,
+          tag_id: candidate.tag_id,
+        },
+        headers: {
+          Authorization: `Zoho-oauthtoken ${accessToken}`,
+        },
+      });
+
+      enrichedTags.push({
+        tag_id: candidate.tag_id,
+        tag_name: candidate.tag_name,
+        status: "active",
+        options: optionsResponse.data.tag_options || [],
+      });
+    } catch {
+      enrichedTags.push({
+        tag_id: candidate.tag_id,
+        tag_name: candidate.tag_name,
+        status: "active",
+        options: [],
+      });
+    }
   }
 
   return enrichedTags;
